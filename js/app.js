@@ -189,7 +189,7 @@
   function currentTab() {
     const h = location.hash;
     if (h.startsWith('#/league')) return 'leagues';
-    if (h.startsWith('#/settings')) return 'settings';
+    if (h.startsWith('#/settings') || h.startsWith('#/info')) return 'info';
     if (h.startsWith('#/history')) return 'history';
     return 'home';
   }
@@ -319,7 +319,7 @@
     if (!values.length) return '';
     return `
       <section class="card acca">
-        <div class="acca-head"><b>Цінні ставки</b><span>ймовірність вища, ніж закладено в коефіцієнт</span></div>
+        <div class="acca-head"><b>Цінні ставки ${help('value')}</b><span>ймовірність вища, ніж закладено в коефіцієнт</span></div>
         ${values.slice(0, 5).map(x => `<a class="acca-row" href="#/match/${x.slug}/${x.ev.id}">
           <span>${esc(x.ev.home.short || x.ev.home.name)} — ${esc(x.ev.away.short || x.ev.away.name)}</span>
           <b>${esc(x.pred.value.short)} @ ${x.pred.value.odds.toFixed(2)} · +${(x.pred.value.edge * 100).toFixed(0)}%</b></a>`).join('')}
@@ -332,7 +332,7 @@
     const p = picks.reduce((s, x) => s * x.pred.tip.p, 1);
     return `
       <section class="card acca">
-        <div class="acca-head"><b>Експрес дня</b><span>ймовірність ${pct(p)} · справедливий кф ${fair(p)}</span></div>
+        <div class="acca-head"><b>Експрес дня ${help('acca')}</b><span>ймовірність ${pct(p)} · справедливий кф ${fair(p)}</span></div>
         ${picks.map(x => `<div class="acca-row"><span>${esc(x.ev.home.short || x.ev.home.name)} — ${esc(x.ev.away.short || x.ev.away.name)}</span><b>${esc(x.pred.tip.short)}</b></div>`).join('')}
         <p class="hint">Кожна подія в експресі множить ризик. Ставте лише тоді, коли кф букмекера вищий за справедливий.</p>
       </section>`;
@@ -423,7 +423,7 @@
           <div class="hero-score">${showScore ? `${ev.home.score ?? 0} : ${ev.away.score ?? 0}` : esc(timeOf(ev.ts))}<small>${esc(ev.state === 'pre' && isUpcoming(ev) ? dateOf(ev.ts) : statusText(ev))}</small></div>
           <div><img src="${esc(ev.away.logo)}" alt=""><b>${esc(ev.away.name)}</b></div>
         </div>
-        <div class="xg">Очікувані голи: <b>${pred.lh.toFixed(2)}</b> : <b>${pred.la.toFixed(2)}</b></div>
+        <div class="xg">Очікувані голи: <b>${pred.lh.toFixed(2)}</b> : <b>${pred.la.toFixed(2)}</b> ${help('expgoals')}</div>
         <div class="bar big">
           <span class="b1" style="flex:${p['1']}">${pct(p['1'])}</span>
           <span class="bx" style="flex:${p.X}">${pct(p.X)}</span>
@@ -433,23 +433,24 @@
       </section>
 
       <section class="card tipcard ${confClass(pred.tip.conf)}">
-        <div class="tip-label">Рекомендована ставка</div>
+        <div class="tip-label">Рекомендована ставка ${help('tip')}</div>
         <div class="tip-main">${esc(pred.tip.long)}</div>
         <div class="tip-stats">
           <span>Ймовірність <b>${pct(pred.tip.p)}</b></span>
-          <span>Справедливий кф <b>${fair(pred.tip.p)}</b></span>
+          <span>Справедливий кф <b>${fair(pred.tip.p)}</b> ${help('fair')}</span>
           ${pred.tip.odds ? `<span>Кф букмекера <b>${pred.tip.odds.toFixed(2)}</b></span>` : ''}
-          <span>Впевненість <b>${pred.tip.conf.label}</b></span>
+          <span>Впевненість <b>${pred.tip.conf.label}</b> ${help('conf')}</span>
         </div>
         ${pred.alternatives.length ? `<div class="alts">Також варто розглянути: ${pred.alternatives.map(x => `<span>${esc(x.short)} ${pct(x.p)}</span>`).join('')}</div>` : ''}
-        ${pred.value ? `<div class="value-pick">Цінна ставка: <b>${esc(pred.value.long)}</b> за кф ${pred.value.odds.toFixed(2)}, перевага +${(pred.value.edge * 100).toFixed(1)}%</div>` : ''}
+        ${pred.value ? `<div class="value-pick">Цінна ставка ${help('value')}: <b>${esc(pred.value.long)}</b> за кф ${pred.value.odds.toFixed(2)}, перевага +${(pred.value.edge * 100).toFixed(1)}%</div>` : ''}
+        <a class="gloss-link" href="#/info/markets">Що означають ТБ, ІТ, Ф1 та інші позначення →</a>
       </section>
 
       ${withOdds.length ? `
       <section class="card">
         <h3>Порівняння з букмекером${ev.odds && ev.odds.provider ? ` (${esc(ev.odds.provider)})` : ''}</h3>
         <table class="markets">
-          <thead><tr><th>Ринок</th><th>Ймов.</th><th>Кф</th><th>Перевага</th></tr></thead>
+          <thead><tr><th>Ринок</th><th>Ймов.</th><th>Кф</th><th>Перевага ${help('edge')}</th></tr></thead>
           <tbody>${withOdds.map(x => {
             const good = x.edge >= 0.03 && x.p >= 0.30;
             return `
@@ -458,7 +459,7 @@
           }).join('')}
           </tbody>
         </table>
-        <p class="hint">Перевага = ймовірність × кф − 1. Додатна — ставка вигідна на дистанції. Ринки з ймовірністю нижче 30% не рекомендуються навіть із перевагою: розкид результатів там надто великий.</p>
+        <p class="hint">Перевага = ймовірність × кф − 1 — середній результат ставки на довгій дистанції: +8% означає в середньому +8 грн на кожні 100 грн ставок, −12% — у середньому −12 грн. Ринки з ймовірністю нижче 30% не рекомендуються навіть із перевагою: вони програють дуже часто, а невелика помилка прогнозу легко «з'їдає» перевагу.</p>
       </section>` : ''}
 
       <section class="card">
@@ -739,12 +740,52 @@
     };
   }
 
-  // ---------- Налаштування ----------
-  function viewSettings() {
+  // ---------- Довідка ----------
+  function viewInfo(focus) {
     ++renderId;
-    setHeader('Налаштування');
+    setHeader('Довідка');
+    const G = FP.GLOSSARY;
     $view.innerHTML = `
-      <section class="card">
+      <nav class="toc">
+        <a href="#/info/terms">Як читати прогноз</a>
+        <a href="#/info/markets">Словник ставок</a>
+        <a href="#/info/how">Як працює аналіз</a>
+        <a href="#/info/data">Дані</a>
+      </nav>
+
+      <section class="card" id="t-terms">
+        <h3>Як читати прогноз</h3>
+        <dl class="terms">${G.terms.map(t => `
+          <div id="t-${t.id}" class="term"><dt>${esc(t.title)}</dt><dd>${esc(t.text)}</dd></div>`).join('')}
+        </dl>
+      </section>
+
+      <section class="card" id="t-markets">
+        <h3>Словник ставок</h3>
+        ${G.markets.map((g, i) => `
+          <details class="mgroup" ${i < 2 ? 'open' : ''}>
+            <summary>${esc(g.group)}<span>${g.items.length}</span></summary>
+            <dl class="gloss">${g.items.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
+          </details>`).join('')}
+      </section>
+
+      <section class="card" id="t-how">
+        <h3>Як працює аналіз</h3>
+        <ul class="reasons">
+          <li>З результатів усіх матчів сезону рахуються індекси атаки й оборони кожної команди з урахуванням сили суперників. Свіжі матчі важать більше, минулий сезон теж враховується з меншою вагою.</li>
+          <li>Поки зіграно мало матчів, індекси згладжуються до середнього, щоб одна випадкова гра не спотворювала прогноз.</li>
+          <li>У єврокубках відправна точка — рейтинг команди у своєму чемпіонаті з поправкою на силу чемпіонату.</li>
+          <li>Для АПЛ, Ла Ліги, Бундесліги, Серії A, Ліги 1, Чемпіоншипу і Бразилії в рейтинги на 40% входить xG.</li>
+          <li>Форма за останні 5 матчів змінює очікувані голи не більше ніж на ±6%.</li>
+          <li>З очікуваних голів модель Пуассона з поправкою Діксона–Коулза рахує ймовірність кожного рахунку, а з них — ймовірності всіх ринків.</li>
+          <li>Якщо є коефіцієнти букмекера, ймовірності поєднуються: 30% модель + 70% ринок.</li>
+          <li>Кутові й картки рахуються окремою моделлю за сезонною статистикою команд, тож це орієнтовна оцінка: вона не знає ні суддю, ні тактику на конкретний матч.</li>
+          <li>Тайми рахуються за середньою часткою голів: близько 44% у першому таймі, 56% у другому.</li>
+          <li>Вкладка «Історія» показує, скільки прогнозів додатка справді зіграло.</li>
+        </ul>
+      </section>
+
+      <section class="card" id="t-data">
         <h3>Дані</h3>
         <ul class="reasons">
           <li>Розклад, результати, таблиці, склади, коефіцієнти, xG і статистика команд (кутові, картки, удари) беруться з ESPN. Ключ і реєстрація не потрібні.</li>
@@ -754,23 +795,6 @@
           <li>Інформації про травми в безкоштовних джерелах немає. Її частково враховують коефіцієнти букмекера, з якими поєднується прогноз.</li>
         </ul>
         <div class="btn-row"><button id="clear" class="btn ghost">Очистити кеш</button></div>
-      </section>
-
-      <section class="card">
-        <h3>Як працює аналіз</h3>
-        <ul class="reasons">
-          <li>З результатів усіх матчів сезону рахуються індекси атаки й оборони кожної команди з урахуванням сили суперників. Свіжі матчі важать більше.</li>
-          <li>Поки зіграно мало матчів, індекси згладжуються до середнього, щоб одна випадкова гра не спотворювала прогноз.</li>
-          <li>У єврокубках відправна точка — рейтинг команди у своєму чемпіонаті з поправкою на силу чемпіонату.</li>
-          <li>Для АПЛ, Ла Ліги, Бундесліги, Серії A, Ліги 1, Чемпіоншипу і Бразилії в рейтинги на 40% входить xG — очікувані голи за якістю створених моментів. xG стабільніший за реальні голи і краще передбачає майбутнє.</li>
-          <li>Форма за останні 5 матчів змінює очікувані голи не більше ніж на ±6%.</li>
-          <li>Ринки: результат, подвійний шанс, «нічия — повернення», тотали 0.5–4.5, фори ±1.5/±2.5, індивідуальні тотали, «обидві заб'ють», перемога всуху, кількість голів, комбіновані, тайми і «тайм/матч», кутові, жовті картки.</li>
-          <li>Кутові й картки рахуються окремою моделлю за сезонною статистикою команд, тож це орієнтовна оцінка: вона не знає ні суддю, ні тактику на конкретний матч.</li>
-          <li>Вкладка «Історія» показує, скільки прогнозів додатка справді зіграло.</li>
-          <li>З очікуваних голів модель Пуассона з поправкою Діксона–Коулза рахує ймовірність кожного рахунку і всіх ринків.</li>
-          <li>Якщо є коефіцієнти букмекера, ймовірності поєднуються: 30% модель + 70% ринок. Ринок знає про склади, травми і новини, яких не бачить статистика.</li>
-          <li>Основна рекомендація — найімовірніший ринок зі справедливим кф від 1.30. «Цінна ставка» — ринок, де наша ймовірність вища, ніж закладено в коефіцієнт, щонайменше на 3%.</li>
-        </ul>
       </section>
 
       <section class="card disclaimer">
@@ -785,7 +809,21 @@
       state.lineups.clear();
       document.getElementById('clear').textContent = 'Кеш очищено';
     };
+
+    // Перехід до конкретного терміна (#/info/edge) — прокручуємо і підсвічуємо його.
+    const el = focus && document.getElementById(`t-${focus}`);
+    if (el) {
+      const d = el.closest('details');
+      if (d) d.open = true;
+      el.scrollIntoView({ block: 'start' });
+      window.scrollBy(0, -64);
+      el.classList.add('flash');
+      setTimeout(() => el.classList.remove('flash'), 1500);
+    }
   }
+
+  // Маленьке посилання «?» на пояснення терміна в довідці.
+  const help = id => `<a class="help" href="#/info/${id}" aria-label="Що це означає?">?</a>`;
 
   // ---------- Навігація ----------
   function route() {
@@ -795,7 +833,8 @@
       case 'match': return viewMatch(parts[1], parts[2]);
       case 'leagues': return viewLeagues();
       case 'league': return viewLeague(parts[1]);
-      case 'settings': return viewSettings();
+      case 'info': return viewInfo(parts[1]);
+      case 'settings': return viewInfo();
       case 'history': return viewHistory();
       default: return viewHome();
     }

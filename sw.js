@@ -1,8 +1,8 @@
 // Офлайн-оболонка додатка. Дані API не кешуються тут — ними керує js/api.js.
-const VERSION = 'fp-v5';
+const VERSION = 'fp-v6';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
-  'js/config.js', 'js/api.js', 'js/model.js', 'js/history.js', 'js/app.js',
+  'js/config.js', 'js/api.js', 'js/model.js', 'js/history.js', 'js/glossary.js', 'js/app.js',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 const IMG_CACHE = 'fp-img';

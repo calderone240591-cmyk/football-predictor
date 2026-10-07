@@ -283,6 +283,24 @@ a.acca-row { color: inherit; text-decoration: none; }
 .history small { color: var(--muted); }
 .btn-row.pad { padding: 0 2px 12px; }
 
+/* ---------- довідка ---------- */
+.toc { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.toc a { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 5px 11px; font-size: 13px; color: var(--text); text-decoration: none; }
+.terms, .gloss { margin: 0; display: grid; gap: 12px; }
+.terms dt, .gloss dt { font-weight: 700; font-size: 14px; }
+.terms dd, .gloss dd { margin: 2px 0 0; font-size: 14px; color: var(--muted); }
+.gloss { gap: 10px; padding-bottom: 10px; }
+.gloss div { display: grid; grid-template-columns: minmax(96px, 34%) 1fr; gap: 10px; align-items: baseline; }
+.gloss dd { margin: 0; }
+.term { scroll-margin-top: 70px; border-radius: 8px; transition: background-color 1.5s; }
+.term.flash { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.help {
+  display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 50%;
+  font: 700 11px/1 system-ui, sans-serif; text-decoration: none; vertical-align: 1px;
+  background: var(--surface-2); color: var(--muted); border: 1px solid var(--line);
+}
+.gloss-link { display: inline-block; margin-top: 10px; font-size: 13px; text-decoration: none; }
+
 /* ---------- ліги ---------- */
 .league-list { display: grid; gap: 8px; }
 .league-item {
