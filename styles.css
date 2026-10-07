@@ -337,6 +337,8 @@ a.acca-row { color: inherit; text-decoration: none; }
 .leg-main small, .leg-num small { font-size: 11px; color: var(--muted); }
 .leg-main span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .leg-main b { font-size: 14px; color: var(--accent); }
+.leg-league { display: flex; align-items: center; gap: 4px; font-style: normal; font-size: 11px; color: var(--muted); }
+.leg-league img { width: 13px; height: 13px; object-fit: contain; }
 .leg-num { display: grid; text-align: right; flex: none; min-width: 44px; }
 .leg-odds { width: 64px; flex: none; padding: 6px 8px; }
 .leg-x { flex: none; border: 0; background: transparent; color: var(--muted); font-size: 16px; width: 28px; height: 28px; cursor: pointer; }

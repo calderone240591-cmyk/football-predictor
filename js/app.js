@@ -715,11 +715,11 @@
   // Рівні ризику для готових експресів: цільовий коефіцієнт і орієнтовна кількість подій.
   // Ймовірність окремої події підбирається так, щоб за n подій вийти на цільовий кф.
   const ACCA_LEVELS = [
-    { name: 'Надійний',      risk: 1, target: 2,  n: 3 },
-    { name: 'Помірний',      risk: 2, target: 3.5, n: 4 },
-    { name: 'Збалансований', risk: 3, target: 6,  n: 5 },
-    { name: 'Ризикований',   risk: 4, target: 10, n: 5 },
-    { name: 'Високий ризик', risk: 5, target: 20, n: 6 },
+    { name: 'Надійний',      risk: 1, n: 3, target: 2,   lo: 1.8, hi: 2.5 },
+    { name: 'Помірний',      risk: 2, n: 4, target: 3.5, lo: 3,   hi: 4.5 },
+    { name: 'Збалансований', risk: 3, n: 5, target: 6,   lo: 5,   hi: 8 },
+    { name: 'Ризикований',   risk: 4, n: 5, target: 10,  lo: 8.5, hi: 13 },
+    { name: 'Високий ризик', risk: 5, n: 6, target: 22,  lo: 20,  hi: 35 },
   ];
   // Ринки для експресів: лише основні, без таймів, кутових і карток (там модель орієнтовна).
   const ACCA_GROUPS = new Set(['Результат', 'Тотал голів', 'Обидві заб\'ють', 'Фори', 'Індивідуальні тотали', 'Комбіновані']);
@@ -727,41 +727,86 @@
 
   const legOdds = l => (l.userOdds > 1 ? l.userOdds : l.odds > 1 ? l.odds : null);
 
-  function buildAccas(pool) {
-    const used = new Set();
-    return ACCA_LEVELS.map(level => {
-      const ideal = Math.pow(level.target, -1 / level.n);
-      // Для кожного матчу — ринок з ймовірністю, найближчою до потрібної.
-      const options = [];
-      for (const { slug, ev, pred } of pool) {
-        let best = null;
-        for (const m of pred.markets) {
-          if (!ACCA_GROUPS.has(m.group) || ACCA_EXCLUDE.has(m.key)) continue;
-          if (Math.abs(m.p - ideal) > 0.1 || m.p > 0.9) continue;
-          const score = -Math.abs(m.p - ideal) + Math.max(0, m.edge || 0);
-          if (!best || score > best.score) best = { m, score };
-        }
-        if (best) options.push({ slug, ev, m: best.m, score: best.score + (used.has(ev.id) ? -1 : 0) + (pred.lowData ? -0.5 : 0) });
-      }
-      options.sort((a, b) => b.score - a.score);
-      const legs = [];
+  const isAccaMarket = m => ACCA_GROUPS.has(m.group) && !ACCA_EXCLUDE.has(m.key);
+
+  // Оцінка події для експресу: близькість до потрібної ймовірності, бонус за перевагу над
+  // букмекером, штраф за мало даних і за матч, уже використаний в іншому експресі.
+  const legScore = (m, pred, ev, ideal, used) =>
+    -Math.abs(m.p - ideal) + Math.max(0, m.edge || 0) - (pred.lowData ? 0.5 : 0) - (used.has(ev.id) ? 1 : 0);
+
+  const toLeg = ({ slug, ev, m }) => ({
+    slug, id: ev.id, ts: ev.ts, home: ev.home.short || ev.home.name, away: ev.away.short || ev.away.name,
+    key: m.key, short: m.short, long: m.long, p: m.p, odds: m.odds || null,
+  });
+
+  const finishAcca = (title, risk, chosen, used) => {
+    chosen.forEach(o => used.add(o.ev.id));
+    return { title, risk, legs: chosen.sort((a, b) => a.ev.ts - b.ev.ts).map(toLeg) };
+  };
+
+  // Рівень ризику за загальною ймовірністю експресу.
+  const riskOf = p => (p >= 0.4 ? 1 : p >= 0.25 ? 2 : p >= 0.15 ? 3 : p >= 0.08 ? 4 : 5);
+
+  // Експреси за рівнями ризику: від надійного (кф ~2) до високого ризику (кф 20+).
+  const buildLevelAccas = (pool, used) => ACCA_LEVELS.map(l => ({
+    ...buildFixedAccas(pool, used, l.n, [l.target], l.lo, l.hi, l.name)[0], risk: l.risk,
+  }));
+
+  // Експреси з фіксованою кількістю подій n і загальним кф у межах [lo, hi], найближчим до target.
+  function buildFixedAccas(pool, used, n, targets, lo, hi, name) {
+    return targets.map(target => {
+      const ideal = Math.pow(target, -1 / n);
+      const chosen = [];
       let odds = 1;
-      for (const o of options) {
-        if (odds >= level.target || legs.length >= level.n + 3) break;
-        legs.push(o);
-        odds /= o.m.p;
+      // Перші n−1 подій — найкращі з ймовірністю, близькою до потрібної.
+      for (let i = 0; i < n - 1; i++) {
+        let best = null;
+        for (const { slug, ev, pred } of pool) {
+          if (chosen.some(c => c.ev.id === ev.id)) continue;
+          for (const m of pred.markets) {
+            if (!isAccaMarket(m) || m.p < 0.3 || m.p > 0.9) continue;
+            const score = legScore(m, pred, ev, ideal, used);
+            if (!best || score > best.score) best = { slug, ev, m, score };
+          }
+        }
+        if (!best) break;
+        chosen.push(best);
+        odds /= best.m.p;
       }
-      if (odds < level.target * 0.9) return { level, legs: [] };
-      legs.forEach(o => used.add(o.ev.id));
-      return {
-        level,
-        legs: legs.sort((a, b) => a.ev.ts - b.ev.ts).map(({ slug, ev, m }) => ({
-          slug, id: ev.id, ts: ev.ts, home: ev.home.short || ev.home.name, away: ev.away.short || ev.away.name,
-          key: m.key, short: m.short, long: m.long, p: m.p, odds: m.odds || null,
-        })),
-      };
+      // Остання подія — та, що приводить загальний кф якнайближче до цілі в межах діапазону.
+      let last = null;
+      for (const { slug, ev, pred } of pool) {
+        if (chosen.some(c => c.ev.id === ev.id)) continue;
+        for (const m of pred.markets) {
+          if (!isAccaMarket(m) || m.p < 0.3 || m.p > 0.9) continue;
+          const total = odds / m.p;
+          if (total < lo || total > hi) continue;
+          const score = -2 * Math.abs(Math.log(total / target)) + Math.max(0, m.edge || 0)
+            - (pred.lowData ? 0.5 : 0) - (used.has(ev.id) ? 1 : 0);
+          if (!last || score > last.score) last = { slug, ev, m, score };
+        }
+      }
+      if (chosen.length !== n - 1 || !last) return { title: name, risk: 3, legs: [] };
+      chosen.push(last);
+      const p = chosen.reduce((s, o) => s * o.m.p, 1);
+      return finishAcca(name, riskOf(p), chosen, used);
     });
   }
+
+  function buildAccas(pool) {
+    const used = new Set();
+    return {
+      levels: buildLevelAccas(pool, used),
+      doubles: buildFixedAccas(pool, used, 2, [3.5, 5, 7], 3, 8, 'Експрес з 2 подій'),
+      triples: buildFixedAccas(pool, used, 3, [10, 15, 22], 8, 25, 'Експрес з 3 подій'),
+    };
+  }
+
+  // Країна й турнір події: «Данія · Суперліга», «УЄФА · Ліга чемпіонів».
+  const leagueLabel = slug => {
+    const l = LEAGUE_BY_SLUG.get(slug);
+    return l ? `${l.country} · ${l.name}` : '';
+  };
 
   function accaTotals(legs) {
     const live = legs.filter(l => l.ts * 1000 > Date.now());
@@ -779,6 +824,7 @@
       <div class="leg ${started ? 'started' : ''}">
         <a href="#/match/${l.slug}/${l.id}" class="leg-main">
           <small>${esc(dateOf(l.ts))} ${esc(timeOf(l.ts))}${started ? ' · матч почався' : ''}</small>
+          <em class="leg-league"><img src="${FP.leagueLogo(LEAGUE_BY_SLUG.get(l.slug))}" alt="">${esc(leagueLabel(l.slug))}</em>
           <span>${esc(l.home)} — ${esc(l.away)}</span>
           <b>${esc(l.short)}</b>
         </a>
@@ -842,24 +888,33 @@
     await loadTeamStats(items);
     if (rid !== renderId) return;
     const pool = items.map(x => ({ ...x, pred: predictionFor(x.slug, x.ev) })).filter(x => x.pred);
-    const accas = buildAccas(pool);
-    state.accas = accas;
+    const { levels, doubles, triples } = buildAccas(pool);
+    state.accas = [...levels, ...doubles, ...triples];
 
-    document.getElementById('accas').innerHTML = accas.map((a, i) => {
+    let idx = 0;
+    const card = a => {
+      const i = idx++;
       if (!a.legs.length) {
-        return `<section class="card acca-card"><div class="acca-title">${riskDots(a.level.risk)}<b>${a.level.name}</b></div>
+        return `<section class="card acca-card"><div class="acca-title">${riskDots(a.risk)}<b>${esc(a.title)}</b></div>
           <p class="hint">Недостатньо відповідних матчів на найближчі 3 дні.</p></section>`;
       }
       const t = accaTotals(a.legs);
       return `
         <section class="card acca-card">
-          <div class="acca-title">${riskDots(a.level.risk)}<b>${a.level.name}</b><span>кф ${t.fair.toFixed(2)}</span></div>
+          <div class="acca-title">${riskDots(a.risk)}<b>${esc(a.title)}</b><span>кф ${t.fair.toFixed(2)}</span></div>
           <div class="acca-sub">Ймовірність ${t.p >= 0.01 ? pct(t.p) : '<1%'} · подій ${t.n}${t.odds ? ` · за кф DraftKings ${t.odds.toFixed(2)}` : ''}</div>
           <div class="legs">${a.legs.map(l => legRow(l, false)).join('')}</div>
           <div class="btn-row"><button class="btn ghost" data-load-acca="${i}">Завантажити в конструктор</button></div>
         </section>`;
-    }).join('') + `
-      <p class="hint pad">Коефіцієнт тут справедливий (без маржі). Букмекер на кожну подію дає зазвичай на 5–8% менше, тож реальний кф експресу буде нижчим: на 6 подіях — приблизно на третину. Ймовірність показує, як часто такий експрес заходить: 5% — приблизно раз на 20 спроб.</p>`;
+    };
+
+    document.getElementById('accas').innerHTML = `
+      ${levels.map(card).join('')}
+      <h2 class="section-title">З 2 подій · кф від 3 до 8</h2>
+      ${doubles.map(card).join('')}
+      <h2 class="section-title">З 3 подій · кф від 8 до 25</h2>
+      ${triples.map(card).join('')}
+      <p class="hint pad">Коефіцієнт тут справедливий (без маржі). Букмекер на кожну подію дає зазвичай на 5–8% менше, тож реальний кф експресу буде нижчим: на 6 подіях — приблизно на третину. Ймовірність показує, як часто такий експрес заходить: 5% — приблизно раз на 20 спроб. Матчі в різних експресах по можливості не повторюються.</p>`;
   }
 
   // Події купону: видалення, введення кф, очищення, завантаження готового експресу.
@@ -959,7 +1014,7 @@
         <div class="table-wrap"><table class="standings history">
           <thead><tr><th class="tl">Матч</th><th>Рах.</th><th class="tl">Прогноз</th><th></th></tr></thead>
           <tbody>${settled.slice(0, 60).map(x => `<tr>
-            <td class="tl"><small>${esc(dateOf(x.ts))}</small><br>${esc(x.home)} — ${esc(x.away)}</td>
+            <td class="tl"><small>${esc(dateOf(x.ts))} · ${esc(leagueLabel(x.slug))}</small><br>${esc(x.home)} — ${esc(x.away)}</td>
             <td>${x.h}:${x.a}</td>
             <td class="tl">${esc(x.tip.short)} <small>${pct(x.tip.p)}</small>${x.value ? `<br><small>цінна: ${esc(x.value.short)} @ ${x.value.odds.toFixed(2)} ${x.valRes === true ? '✓' : x.valRes === false ? '✗' : '↺'}</small>` : ''}</td>
             <td>${x.tipRes === true ? '<i class="ok">✓</i>' : x.tipRes === false ? '<i class="bad">✗</i>' : '↺'}</td>
