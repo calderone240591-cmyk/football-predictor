@@ -15,6 +15,7 @@
     loading: new Map(),        // slug → Promise
     standings: new Map(),      // slug → рядки таблиці
     lineups: new Map(),        // id матчу → склади
+    teamStats: new Map(),      // id команди → сезонна статистика (xG, кутові, картки)
     updatedAt: 0,
     valueInput: new Map(),     // id матчу → { market, odds } — щоб автооновлення не стирало введене
   };
@@ -109,7 +110,8 @@
         entries.forEach((e, i) => {
           if (!e || e.error) return;
           domSig += e.sig;
-          for (const t of e.m.teams.values()) domestic.set(t.id, { att: t.att, def: t.def, q: doms[i].q });
+          const season = e.season && e.season.year;
+          for (const t of e.m.teams.values()) domestic.set(t.id, { att: t.att, def: t.def, q: doms[i].q, slug: doms[i].slug, season });
         });
       }
       const season = await api.season(slug, false, !league.cup);
@@ -140,12 +142,40 @@
     });
   }
 
+  // Звідки брати сезонну статистику команди: для єврокубків — з її чемпіонату (там більше матчів).
+  function statsSource(slug, teamId) {
+    const entry = state.models.get(slug);
+    if (!entry || entry.error) return null;
+    if (!entry.m.league.cup) return entry.season ? { slug, season: entry.season.year } : null;
+    const t = entry.m.teams.get(teamId);
+    return t && t.domestic && t.domestic.season ? { slug: t.domestic.slug, season: t.domestic.season } : null;
+  }
+
+  async function loadTeamStats(list) {
+    const jobs = [];
+    for (const { slug, ev } of list) {
+      for (const side of [ev.home, ev.away]) {
+        if (state.teamStats.has(side.id)) continue;
+        const src = statsSource(slug, side.id);
+        if (src) jobs.push({ id: side.id, ...src });
+      }
+    }
+    const uniq = [...new Map(jobs.map(j => [j.id, j])).values()];
+    await api.pool(uniq, 4, async j => {
+      try { state.teamStats.set(j.id, await api.teamSeasonStats(j.slug, j.season, j.id)); } catch {}
+    });
+  }
+
+  const ctxFor = ev => ({ home: state.teamStats.get(ev.home.id) || null, away: state.teamStats.get(ev.away.id) || null });
+
   // Повертає: undefined — ще вантажиться; null — немає даних; об'єкт — прогноз.
   function predictionFor(slug, ev) {
     const entry = state.models.get(slug);
     if (!entry) return undefined;
     if (entry.error) return null;
-    return model.predict(entry.m, ev);
+    const pred = model.predict(entry.m, ev, ctxFor(ev));
+    if (pred && isUpcoming(ev)) FP.history.record(slug, ev, pred);
+    return pred;
   }
 
   const confClass = c => ['', 'lo', 'mid', 'hi'][c.level];
@@ -160,6 +190,7 @@
     const h = location.hash;
     if (h.startsWith('#/league')) return 'leagues';
     if (h.startsWith('#/settings')) return 'settings';
+    if (h.startsWith('#/history')) return 'history';
     return 'home';
   }
 
@@ -209,6 +240,9 @@
       if (rid !== renderId) return;
       renderList();
     }
+    await loadTeamStats(items.filter(x => !isFinished(x.ev)));
+    if (rid !== renderId) return;
+    renderList();
     await loadLineups(items);
     if (rid !== renderId) return;
     state.updatedAt = Date.now();
@@ -355,10 +389,13 @@
     if (!x) { $view.innerHTML = `<div class="empty">Матч не знайдено. <a href="#/">До списку прогнозів</a></div>`; return; }
     if (entry.error) { if (!silent) $view.innerHTML = errorBox(entry.error); return; }
 
-    try { state.lineups.set(id, await api.lineups(slug, id)); } catch {}
-    if (rid !== renderId) return;
     const ev = x.ev;
-    const pred = model.predict(entry.m, ev);
+    await Promise.all([
+      api.lineups(slug, id).then(l => state.lineups.set(id, l)).catch(() => {}),
+      loadTeamStats([{ slug, ev }]),
+    ]);
+    if (rid !== renderId) return;
+    const pred = predictionFor(slug, ev);
     if (!pred) { $view.innerHTML = errorBox('Для цих команд ще немає даних.'); return; }
 
     const lineups = state.lineups.get(id) || [];
@@ -442,15 +479,27 @@
       </section>
 
       <section class="card">
+        <h3>Найкращі варіанти по ринках</h3>
+        <div class="picks">${pred.groups.filter(g => g.pick).map(g => `
+          <div class="pick"><span>${esc(g.name)}</span><b>${esc(g.pick.short)}</b><i>${pct(g.pick.p)} · кф ${fair(g.pick.p)}</i></div>`).join('')}
+        </div>
+        <p class="hint">Найімовірніший варіант у кожній групі з ймовірністю 55–85%. Кутові й картки — орієнтовна оцінка за сезонною статистикою команд.</p>
+      </section>
+
+      <section class="card">
         <h3>Усі ринки</h3>
-        <table class="markets">
-          <thead><tr><th>Ринок</th><th>Ймовірність</th><th>Спр. кф</th></tr></thead>
-          <tbody>${pred.markets.map(x => `
-            <tr class="${x.key === pred.tip.key ? 'sel' : ''}"><td>${esc(x.long)}</td>
-              <td><div class="pbar"><i style="width:${(x.p * 100).toFixed(1)}%"></i><span>${pct(x.p)}</span></div></td>
-              <td>${fair(x.p)}</td></tr>`).join('')}
-          </tbody>
-        </table>
+        ${pred.groups.map((g, i) => `
+          <details class="mgroup" ${i === 0 ? 'open' : ''}>
+            <summary>${esc(g.name)}<span>${g.list.length}</span></summary>
+            <table class="markets">
+              <tbody>${g.list.map(x => `
+                <tr class="${x.key === pred.tip.key ? 'sel' : ''}"><td>${esc(x.long)}</td>
+                  <td><div class="pbar"><i style="width:${(x.p * 100).toFixed(1)}%"></i><span>${pct(x.p)}</span></div></td>
+                  <td>${fair(x.p)}</td></tr>`).join('')}
+              </tbody>
+            </table>
+          </details>`).join('')}
+        <p class="hint">Праворуч — справедливий коефіцієнт (без маржі). Ставка вигідна, якщо букмекер дає більше.</p>
       </section>
 
       <section class="card">
@@ -461,7 +510,7 @@
       <section class="card">
         <h3>Порівняння команд</h3>
         ${compare(slug, ev, pred.home, pred.away)}
-        <p class="hint">Індекси з урахуванням сили суперників: 1.00 — середній рівень турніру. Атака вище за 1 — краще за середнє, оборона нижче за 1 — краще за середнє.</p>
+        <p class="hint">Індекси з урахуванням сили суперників: 1.00 — середній рівень турніру. Атака вище за 1 — краще за середнє, оборона нижче за 1 — краще за середнє.${LEAGUE_BY_SLUG.get(slug).cup ? ' Статистика за гру — з матчів у своєму чемпіонаті.' : ''}</p>
       </section>`;
 
     const $m = document.getElementById('v-market'), $o = document.getElementById('v-odds'), $out = document.getElementById('v-out');
@@ -517,11 +566,25 @@
       ['Форма', formChips(h.form) || '—', formChips(a.form) || '—', true],
       ['Індекс атаки', H.att.toFixed(2), A.att.toFixed(2)],
       ['Індекс оборони', H.def.toFixed(2), A.def.toFixed(2)],
-    ].filter(Boolean);
+    ];
+    const hs = state.teamStats.get(ev.home.id), as = state.teamStats.get(ev.away.id);
+    const pg = (s, k) => (s && s.app ? (s[k] / s.app).toFixed(1) : '—');
+    if (hs || as) {
+      if (hs && as && hs.xgf != null && as.xgf != null) {
+        lines.push(['xG створює за гру', hs.xgf.toFixed(2), as.xgf.toFixed(2)]);
+        lines.push(['xG дозволяє за гру', hs.xga.toFixed(2), as.xga.toFixed(2)]);
+      }
+      lines.push(['Удари в площину', pg(hs, 'shotsOnTarget'), pg(as, 'shotsOnTarget')]);
+      lines.push(['Кутові подає', pg(hs, 'cornersFor'), pg(as, 'cornersFor')]);
+      lines.push(['Кутові дозволяє', pg(hs, 'cornersAgainst'), pg(as, 'cornersAgainst')]);
+      lines.push(['Жовті картки', pg(hs, 'yellow'), pg(as, 'yellow')]);
+      lines.push(['Фоли', pg(hs, 'fouls'), pg(as, 'fouls')]);
+      if (hs && as && hs.possession && as.possession) lines.push(['Володіння', `${Math.round(hs.possession)}%`, `${Math.round(as.possession)}%`]);
+    }
     return `
       <table class="compare">
         <thead><tr><th>${esc(ev.home.short || ev.home.name)}</th><th></th><th>${esc(ev.away.short || ev.away.name)}</th></tr></thead>
-        <tbody>${lines.map(([label, x, y, raw]) =>
+        <tbody>${lines.filter(Boolean).map(([label, x, y, raw]) =>
           `<tr><td>${raw ? x : esc(x)}</td><th>${esc(label)}</th><td>${raw ? y : esc(y)}</td></tr>`).join('')}
         </tbody>
       </table>`;
@@ -595,6 +658,87 @@
       <p class="hint pad">Атк/Обр — індекси сили з урахуванням суперників (1.00 — середній рівень турніру). Форма — від старіших матчів до свіжіших.</p>`;
   }
 
+  // ---------- Історія прогнозів ----------
+  async function viewHistory() {
+    const rid = ++renderId;
+    setHeader('Історія');
+    const entries = FP.history.all();
+    if (!entries.length) {
+      $view.innerHTML = `<div class="empty">Історія порожня.<br>Додаток запам'ятовує свої прогнози перед матчами, а після матчів показує тут, скільки з них зіграло.</div>`;
+      return;
+    }
+    $view.innerHTML = '<div class="loading">Перевірка результатів…</div>';
+
+    const slugs = [...new Set(entries.map(e => e.slug))].filter(s => LEAGUE_BY_SLUG.has(s));
+    const results = new Map();
+    await api.pool(slugs, 4, async slug => {
+      try {
+        const s = await api.season(slug);
+        for (const ev of s.events) if (isFinished(ev)) results.set(ev.id, ev);
+      } catch {}
+    });
+    if (rid !== renderId) return;
+
+    const settled = [], pending = [];
+    for (const e of entries) {
+      const ev = results.get(e.id);
+      if (!ev) { if (e.ts * 1000 > Date.now() - 3 * 864e5) pending.push(e); continue; }
+      const h = ev.home.score, a = ev.away.score;
+      settled.push({ ...e, h, a, tipRes: model.settle(e.tip.key, h, a), valRes: e.value ? model.settle(e.value.key, h, a) : undefined });
+    }
+    settled.sort((x, y) => y.ts - x.ts);
+
+    const rate = list => {
+      const done = list.filter(x => x.tipRes === true || x.tipRes === false);
+      const hit = done.filter(x => x.tipRes).length;
+      return done.length ? { hit, n: done.length, pct: hit / done.length } : null;
+    };
+    const all = rate(settled);
+    const byLevel = [3, 2, 1].map(l => ({ l, r: rate(settled.filter(x => x.tip.level === l)) }));
+    const vals = settled.filter(x => x.value && (x.valRes === true || x.valRes === false || x.valRes === null));
+    const profit = vals.reduce((s, x) => s + (x.valRes === true ? x.value.odds - 1 : x.valRes === false ? -1 : 0), 0);
+    const tipsWithOdds = settled.filter(x => x.tip.odds && (x.tipRes === true || x.tipRes === false));
+    const tipProfit = tipsWithOdds.reduce((s, x) => s + (x.tipRes ? x.tip.odds - 1 : -1), 0);
+    const fmtR = r => (r ? `<b>${Math.round(r.pct * 100)}%</b> <small>${r.hit} з ${r.n}</small>` : '—');
+    const units = v => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`;
+
+    $view.innerHTML = `
+      <section class="card">
+        <div class="league-stats">
+          <div>${fmtR(all)}<span>основні ставки зіграли</span></div>
+          <div><b class="${profit >= 0 ? 'ok' : 'bad'}">${vals.length ? units(profit) : '—'}</b><span>цінні ставки, прибуток в од.${vals.length ? ` (${vals.length})` : ''}</span></div>
+          <div><b>${pending.length}</b><span>очікують результату</span></div>
+        </div>
+      </section>
+      <section class="card">
+        <h3>Влучність за рівнем впевненості</h3>
+        <table class="markets"><tbody>
+          ${byLevel.map(x => `<tr><td>${['', 'Низька', 'Середня', 'Висока'][x.l]}</td><td>${fmtR(x.r)}</td></tr>`).join('')}
+          ${tipsWithOdds.length ? `<tr><td>Основні ставки за кф букмекера (1 од. на кожну)</td><td><b class="${tipProfit >= 0 ? 'ok' : 'bad'}">${units(tipProfit)}</b> <small>${tipsWithOdds.length} ст.</small></td></tr>` : ''}
+          ${vals.length ? `<tr><td>Цінні ставки: ROI</td><td><b class="${profit >= 0 ? 'ok' : 'bad'}">${(profit / vals.length * 100).toFixed(1)}%</b></td></tr>` : ''}
+        </tbody></table>
+        <p class="hint">Записується останній прогноз перед стартом матчу. Об'єктивні висновки можна робити після кількох сотень ставок; на десятках результат сильно залежить від везіння.</p>
+      </section>
+      ${settled.length ? `<section class="card flush">
+        <div class="table-wrap"><table class="standings history">
+          <thead><tr><th class="tl">Матч</th><th>Рах.</th><th class="tl">Прогноз</th><th></th></tr></thead>
+          <tbody>${settled.slice(0, 60).map(x => `<tr>
+            <td class="tl"><small>${esc(dateOf(x.ts))}</small><br>${esc(x.home)} — ${esc(x.away)}</td>
+            <td>${x.h}:${x.a}</td>
+            <td class="tl">${esc(x.tip.short)} <small>${pct(x.tip.p)}</small>${x.value ? `<br><small>цінна: ${esc(x.value.short)} @ ${x.value.odds.toFixed(2)} ${x.valRes === true ? '✓' : x.valRes === false ? '✗' : '↺'}</small>` : ''}</td>
+            <td>${x.tipRes === true ? '<i class="ok">✓</i>' : x.tipRes === false ? '<i class="bad">✗</i>' : '↺'}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>
+      </section>` : ''}
+      <div class="btn-row pad"><button id="hist-clear" class="btn ghost">Очистити історію</button></div>`;
+
+    document.getElementById('hist-clear').onclick = () => {
+      if (!confirm('Видалити всю історію прогнозів?')) return;
+      FP.history.clear();
+      viewHistory();
+    };
+  }
+
   // ---------- Налаштування ----------
   function viewSettings() {
     ++renderId;
@@ -603,7 +747,7 @@
       <section class="card">
         <h3>Дані</h3>
         <ul class="reasons">
-          <li>Розклад, результати, таблиці, склади і коефіцієнти беруться з ESPN. Ключ і реєстрація не потрібні.</li>
+          <li>Розклад, результати, таблиці, склади, коефіцієнти, xG і статистика команд (кутові, картки, удари) беруться з ESPN. Ключ і реєстрація не потрібні.</li>
           <li>Поки додаток відкритий, рахунки й прогнози оновлюються кожні 2 хвилини.</li>
           <li>Склади з'являються приблизно за годину до матчу. Додаток перевіряє їх кожні 5 хвилин.</li>
           <li>Після кожного зіграного матчу рейтинги команд і прогнози перераховуються автоматично.</li>
@@ -618,7 +762,11 @@
           <li>З результатів усіх матчів сезону рахуються індекси атаки й оборони кожної команди з урахуванням сили суперників. Свіжі матчі важать більше.</li>
           <li>Поки зіграно мало матчів, індекси згладжуються до середнього, щоб одна випадкова гра не спотворювала прогноз.</li>
           <li>У єврокубках відправна точка — рейтинг команди у своєму чемпіонаті з поправкою на силу чемпіонату.</li>
+          <li>Для АПЛ, Ла Ліги, Бундесліги, Серії A, Ліги 1, Чемпіоншипу і Бразилії в рейтинги на 40% входить xG — очікувані голи за якістю створених моментів. xG стабільніший за реальні голи і краще передбачає майбутнє.</li>
           <li>Форма за останні 5 матчів змінює очікувані голи не більше ніж на ±6%.</li>
+          <li>Ринки: результат, подвійний шанс, «нічия — повернення», тотали 0.5–4.5, фори ±1.5/±2.5, індивідуальні тотали, «обидві заб'ють», перемога всуху, кількість голів, комбіновані, тайми і «тайм/матч», кутові, жовті картки.</li>
+          <li>Кутові й картки рахуються окремою моделлю за сезонною статистикою команд, тож це орієнтовна оцінка: вона не знає ні суддю, ні тактику на конкретний матч.</li>
+          <li>Вкладка «Історія» показує, скільки прогнозів додатка справді зіграло.</li>
           <li>З очікуваних голів модель Пуассона з поправкою Діксона–Коулза рахує ймовірність кожного рахунку і всіх ринків.</li>
           <li>Якщо є коефіцієнти букмекера, ймовірності поєднуються: 30% модель + 70% ринок. Ринок знає про склади, травми і новини, яких не бачить статистика.</li>
           <li>Основна рекомендація — найімовірніший ринок зі справедливим кф від 1.30. «Цінна ставка» — ринок, де наша ймовірність вища, ніж закладено в коефіцієнт, щонайменше на 3%.</li>
@@ -648,6 +796,7 @@
       case 'leagues': return viewLeagues();
       case 'league': return viewLeague(parts[1]);
       case 'settings': return viewSettings();
+      case 'history': return viewHistory();
       default: return viewHome();
     }
   }

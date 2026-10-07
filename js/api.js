@@ -245,6 +245,35 @@ FP.api = (() => {
     return cached(k, 0, `${SITE}${slug}/summary?event=${eventId}`, slimSummary, true);
   }
 
+  // Сезонна статистика команди: xG, кутові, картки, удари. Для ліг без xG ESPN віддає нулі —
+  // тоді xG вважаємо недоступним.
+  const CORE = 'https://sports.core.api.espn.com/v2/sports/soccer/leagues/';
+  function teamSeasonStats(slug, season, teamId) {
+    return cached(`ts:${slug}:${season}:${teamId}`, 6 * 60 * MIN,
+      `${CORE}${slug}/seasons/${season}/types/1/teams/${teamId}/statistics`,
+      d => {
+        const s = {};
+        for (const c of (d.splits && d.splits.categories) || []) for (const x of c.stats) s[x.name] = x.value;
+        const app = s.appearances || 0;
+        const hasXg = !!(s.avgExpectedGoalsConceded || s.avgExpectedGoalDifferential);
+        return {
+          app,
+          cornersFor: s.wonCorners || 0,
+          cornersAgainst: s.lostCorners || 0,
+          yellow: s.yellowCards || 0,
+          red: s.redCards || 0,
+          fouls: s.foulsCommitted || 0,
+          shots: s.totalShots || 0,
+          shotsOnTarget: s.shotsOnTarget || 0,
+          shotsFaced: s.shotsFaced || 0,
+          cleanSheets: s.cleanSheet || 0,
+          possession: s.possessionPct || null,
+          xgf: hasXg ? (s.avgExpectedGoalDifferential || 0) + (s.avgExpectedGoalsConceded || 0) : null,
+          xga: hasXg ? s.avgExpectedGoalsConceded || 0 : null,
+        };
+      });
+  }
+
   // Виконує fn для кожного елемента, не більше n запитів одночасно.
   async function pool(items, n, fn) {
     const out = new Array(items.length);
@@ -259,5 +288,5 @@ FP.api = (() => {
     return out;
   }
 
-  return { month, monthsAround, season, standings, lineups, clearCache, pool };
+  return { month, monthsAround, season, standings, lineups, teamSeasonStats, clearCache, pool };
 })();
