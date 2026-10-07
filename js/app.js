@@ -712,15 +712,24 @@
   }
 
   // ---------- Експреси ----------
-  // Рівні ризику для готових експресів: цільовий коефіцієнт і орієнтовна кількість подій.
+  // 11 слотів готових експресів: кількість подій n і цільовий кф у межах [lo, hi].
   // Ймовірність окремої події підбирається так, щоб за n подій вийти на цільовий кф.
-  const ACCA_LEVELS = [
-    { name: 'Надійний',      risk: 1, n: 3, target: 2,   lo: 1.8, hi: 2.5 },
-    { name: 'Помірний',      risk: 2, n: 4, target: 3.5, lo: 3,   hi: 4.5 },
-    { name: 'Збалансований', risk: 3, n: 5, target: 6,   lo: 5,   hi: 8 },
-    { name: 'Ризикований',   risk: 4, n: 5, target: 10,  lo: 8.5, hi: 13 },
-    { name: 'Високий ризик', risk: 5, n: 6, target: 22,  lo: 20,  hi: 35 },
+  // Експрес у слоті не змінюється, доки не завершиться його перша подія; тоді він іде
+  // в статистику, а в слоті з'являється новий.
+  const ACCA_SLOTS = [
+    { slot: 'L1', cat: 'levels',  name: 'Надійний',      risk: 1, n: 3, target: 2,   lo: 1.8, hi: 2.5 },
+    { slot: 'L2', cat: 'levels',  name: 'Помірний',      risk: 2, n: 4, target: 3.5, lo: 3,   hi: 4.5 },
+    { slot: 'L3', cat: 'levels',  name: 'Збалансований', risk: 3, n: 5, target: 6,   lo: 5,   hi: 8 },
+    { slot: 'L4', cat: 'levels',  name: 'Ризикований',   risk: 4, n: 5, target: 10,  lo: 8.5, hi: 13 },
+    { slot: 'L5', cat: 'levels',  name: 'Високий ризик', risk: 5, n: 6, target: 22,  lo: 20,  hi: 35 },
+    { slot: 'D1', cat: 'doubles', name: 'Дубль · кф ~3.5', n: 2, target: 3.5, lo: 3,  hi: 4.2 },
+    { slot: 'D2', cat: 'doubles', name: 'Дубль · кф ~5',   n: 2, target: 5,   lo: 4.2, hi: 6 },
+    { slot: 'D3', cat: 'doubles', name: 'Дубль · кф ~7',   n: 2, target: 7,   lo: 6,  hi: 8 },
+    { slot: 'T1', cat: 'triples', name: 'Трійник · кф ~10', n: 3, target: 10, lo: 8,  hi: 12 },
+    { slot: 'T2', cat: 'triples', name: 'Трійник · кф ~15', n: 3, target: 15, lo: 12, hi: 18 },
+    { slot: 'T3', cat: 'triples', name: 'Трійник · кф ~22', n: 3, target: 22, lo: 18, hi: 25 },
   ];
+  const ACCA_CATS = { levels: 'Рівні ризику', doubles: 'З 2 подій · кф 3–8', triples: 'З 3 подій · кф 8–25' };
   // Ринки для експресів: лише основні, без таймів, кутових і карток (там модель орієнтовна).
   const ACCA_GROUPS = new Set(['Результат', 'Тотал голів', 'Обидві заб\'ють', 'Фори', 'Індивідуальні тотали', 'Комбіновані']);
   const ACCA_EXCLUDE = new Set(['12', 'DNB1', 'DNB2', 'O05', 'HO05', 'AO05']);
@@ -729,78 +738,101 @@
 
   const isAccaMarket = m => ACCA_GROUPS.has(m.group) && !ACCA_EXCLUDE.has(m.key);
 
-  // Оцінка події для експресу: близькість до потрібної ймовірності, бонус за перевагу над
-  // букмекером, штраф за мало даних і за матч, уже використаний в іншому експресі.
-  const legScore = (m, pred, ev, ideal, used) =>
-    -Math.abs(m.p - ideal) + Math.max(0, m.edge || 0) - (pred.lowData ? 0.5 : 0) - (used.has(ev.id) ? 1 : 0);
+  // used.events — події (матч + ринок), уже зайняті в інших експресах: повторювати їх не можна.
+  // used.matches — матчі, що вже трапляються: можна, але з невеликим штрафом заради різноманітності.
+  const eventKey = (id, key) => `${id}:${key}`;
+  const usable = (m, ev, used) => isAccaMarket(m) && m.p >= 0.3 && m.p <= 0.9 && !used.events.has(eventKey(ev.id, m.key));
+  const penalty = (pred, ev, used) => (pred.lowData ? 0.5 : 0) + (used.matches.has(ev.id) ? 0.3 : 0);
 
   const toLeg = ({ slug, ev, m }) => ({
     slug, id: ev.id, ts: ev.ts, home: ev.home.short || ev.home.name, away: ev.away.short || ev.away.name,
     key: m.key, short: m.short, long: m.long, p: m.p, odds: m.odds || null,
   });
 
-  const finishAcca = (title, risk, chosen, used) => {
-    chosen.forEach(o => used.add(o.ev.id));
-    return { title, risk, legs: chosen.sort((a, b) => a.ev.ts - b.ev.ts).map(toLeg) };
-  };
-
   // Рівень ризику за загальною ймовірністю експресу.
   const riskOf = p => (p >= 0.4 ? 1 : p >= 0.25 ? 2 : p >= 0.15 ? 3 : p >= 0.08 ? 4 : 5);
 
-  // Експреси за рівнями ризику: від надійного (кф ~2) до високого ризику (кф 20+).
-  const buildLevelAccas = (pool, used) => ACCA_LEVELS.map(l => ({
-    ...buildFixedAccas(pool, used, l.n, [l.target], l.lo, l.hi, l.name)[0], risk: l.risk,
-  }));
+  function markUsed(legs, used) {
+    for (const l of legs) { used.events.add(eventKey(l.id, l.key)); used.matches.add(l.id); }
+  }
 
-  // Експреси з фіксованою кількістю подій n і загальним кф у межах [lo, hi], найближчим до target.
-  function buildFixedAccas(pool, used, n, targets, lo, hi, name) {
-    return targets.map(target => {
-      const ideal = Math.pow(target, -1 / n);
-      const chosen = [];
-      let odds = 1;
-      // Перші n−1 подій — найкращі з ймовірністю, близькою до потрібної.
-      for (let i = 0; i < n - 1; i++) {
-        let best = null;
-        for (const { slug, ev, pred } of pool) {
-          if (chosen.some(c => c.ev.id === ev.id)) continue;
-          for (const m of pred.markets) {
-            if (!isAccaMarket(m) || m.p < 0.3 || m.p > 0.9) continue;
-            const score = legScore(m, pred, ev, ideal, used);
-            if (!best || score > best.score) best = { slug, ev, m, score };
-          }
-        }
-        if (!best) break;
-        chosen.push(best);
-        odds /= best.m.p;
-      }
-      // Остання подія — та, що приводить загальний кф якнайближче до цілі в межах діапазону.
-      let last = null;
+  // Експрес з n подій із різних матчів, загальний кф у межах [lo, hi] і якнайближче до target.
+  // Перші n−1 подій — з ймовірністю, близькою до потрібної (з бонусом за перевагу над букмекером),
+  // остання — та, що доводить загальний кф до цілі.
+  function buildAcca(pool, used, cfg) {
+    const { n, target, lo, hi } = cfg;
+    const ideal = Math.pow(target, -1 / n);
+    const chosen = [];
+    let odds = 1;
+    for (let i = 0; i < n - 1; i++) {
+      let best = null;
       for (const { slug, ev, pred } of pool) {
         if (chosen.some(c => c.ev.id === ev.id)) continue;
         for (const m of pred.markets) {
-          if (!isAccaMarket(m) || m.p < 0.3 || m.p > 0.9) continue;
-          const total = odds / m.p;
-          if (total < lo || total > hi) continue;
-          const score = -2 * Math.abs(Math.log(total / target)) + Math.max(0, m.edge || 0)
-            - (pred.lowData ? 0.5 : 0) - (used.has(ev.id) ? 1 : 0);
-          if (!last || score > last.score) last = { slug, ev, m, score };
+          if (!usable(m, ev, used)) continue;
+          const score = -Math.abs(m.p - ideal) + Math.max(0, m.edge || 0) - penalty(pred, ev, used);
+          if (!best || score > best.score) best = { slug, ev, m, score };
         }
       }
-      if (chosen.length !== n - 1 || !last) return { title: name, risk: 3, legs: [] };
-      chosen.push(last);
-      const p = chosen.reduce((s, o) => s * o.m.p, 1);
-      return finishAcca(name, riskOf(p), chosen, used);
-    });
-  }
-
-  function buildAccas(pool) {
-    const used = new Set();
+      if (!best) return null;
+      chosen.push(best);
+      odds /= best.m.p;
+    }
+    let last = null;
+    for (const { slug, ev, pred } of pool) {
+      if (chosen.some(c => c.ev.id === ev.id)) continue;
+      for (const m of pred.markets) {
+        if (!usable(m, ev, used)) continue;
+        const total = odds / m.p;
+        if (total < lo || total > hi) continue;
+        const score = -2 * Math.abs(Math.log(total / target)) + Math.max(0, m.edge || 0) - penalty(pred, ev, used);
+        if (!last || score > last.score) last = { slug, ev, m, score };
+      }
+    }
+    if (!last) return null;
+    chosen.push(last);
+    const legs = chosen.sort((a, b) => a.ev.ts - b.ev.ts).map(toLeg);
+    const p = legs.reduce((s, l) => s * l.p, 1);
     return {
-      levels: buildLevelAccas(pool, used),
-      doubles: buildFixedAccas(pool, used, 2, [3.5, 5, 7], 3, 8, 'Експрес з 2 подій'),
-      triples: buildFixedAccas(pool, used, 3, [10, 15, 22], 8, 25, 'Експрес з 3 подій'),
+      id: `${cfg.slot}-${Date.now()}`, slot: cfg.slot, cat: cfg.cat, title: cfg.name,
+      risk: cfg.risk || riskOf(p), createdAt: Date.now(), p, fair: 1 / p, legs,
     };
   }
+
+  // ---------- статус подій і експресів ----------
+  const VOID_STATUS = /POSTPONED|CANCELED|ABANDONED/;
+
+  // Статус події за даними сезону: pending / live / win / loss / void / unknown.
+  function legStatus(l) {
+    const x = state.events.get(evKey(l.slug, l.id));
+    const ev = x && x.ev;
+    if (!ev) return { s: l.ts * 1000 + 4 * 3600e3 < Date.now() ? 'unknown' : 'pending' };
+    if (VOID_STATUS.test(ev.status)) return { s: 'void' };
+    if (isFinished(ev)) {
+      const r = model.settle(l.key, ev.home.score, ev.away.score);
+      return { s: r === true ? 'win' : r === false ? 'loss' : 'void', score: `${ev.home.score}:${ev.away.score}` };
+    }
+    if (isLive(ev)) return { s: 'live', score: `${ev.home.score ?? 0}:${ev.away.score ?? 0}` };
+    return { s: 'pending' };
+  }
+
+  // Підсумок експресу: програш, якщо програла хоч одна подія; виграш, коли решта зіграли.
+  function accaStatus(a) {
+    const st = a.legs.map(legStatus);
+    const live = a.legs.filter((l, i) => st[i].s !== 'void');
+    const p = live.reduce((s, l) => s * l.p, 1);
+    let s = 'pending';
+    if (st.some(x => x.s === 'loss')) s = 'loss';
+    else if (st.every(x => x.s === 'win' || x.s === 'void')) s = st.some(x => x.s === 'win') ? 'win' : 'void';
+    return { s, legs: st, p, fair: 1 / p, wins: st.filter(x => x.s === 'win').length, settledLegs: st.filter(x => x.s === 'win' || x.s === 'loss').length };
+  }
+
+  const firstLegDone = a => ['win', 'loss', 'void', 'unknown'].includes(legStatus(a.legs[0]).s);
+
+  const STATUS_ICON = { win: '<i class="ok">✓</i>', loss: '<i class="bad">✗</i>', void: '↺', unknown: '?' };
+  const ACCA_STATUS = {
+    pending: ['в грі', ''], win: ['зайшов', 'win'], loss: ['не зайшов', 'loss'], void: ['повернення', ''],
+  };
 
   // Країна й турнір події: «Данія · Суперліга», «УЄФА · Ліга чемпіонів».
   const leagueLabel = slug => {
@@ -818,12 +850,17 @@
 
   const riskDots = r => `<span class="risk r${r}">${'●'.repeat(r)}${'○'.repeat(5 - r)}</span>`;
 
-  function legRow(l, editable) {
+  // st — статус події (для готових експресів): показуємо рахунок і ✓/✗ замість кф.
+  function legRow(l, editable, st) {
     const started = l.ts * 1000 <= Date.now();
+    const done = st && st.s !== 'pending';
+    const right = done
+      ? `<div class="leg-num leg-st"><b>${st.s === 'live' ? `<span class="live">LIVE</span>` : STATUS_ICON[st.s]}</b><small>${esc(st.score || '')}</small></div>`
+      : `<div class="leg-num"><b>${l.odds ? l.odds.toFixed(2) : '—'}</b><small>кф DK</small></div>`;
     return `
-      <div class="leg ${started ? 'started' : ''}">
+      <div class="leg ${started && editable ? 'started' : ''} ${st ? `st-${st.s}` : ''}">
         <a href="#/match/${l.slug}/${l.id}" class="leg-main">
-          <small>${esc(dateOf(l.ts))} ${esc(timeOf(l.ts))}${started ? ' · матч почався' : ''}</small>
+          <small>${esc(dateOf(l.ts))} ${esc(timeOf(l.ts))}${started && editable ? ' · матч почався' : ''}</small>
           <em class="leg-league"><img src="${FP.leagueLogo(LEAGUE_BY_SLUG.get(l.slug))}" alt="">${esc(leagueLabel(l.slug))}</em>
           <span>${esc(l.home)} — ${esc(l.away)}</span>
           <b>${esc(l.short)}</b>
@@ -831,7 +868,7 @@
         <div class="leg-num"><b>${pct(l.p)}</b><small>спр. ${fair(l.p)}</small></div>
         ${editable ? `
           <input class="leg-odds" data-odds="${esc(l.id)}" type="number" inputmode="decimal" step="0.01" min="1.01" placeholder="кф" value="${legOdds(l) ? legOdds(l).toFixed(2) : ''}">
-          <button class="leg-x" data-remove="${esc(l.id)}" aria-label="Прибрати">✕</button>` : `<div class="leg-num"><b>${l.odds ? l.odds.toFixed(2) : '—'}</b><small>кф DK</small></div>`}
+          <button class="leg-x" data-remove="${esc(l.id)}" aria-label="Прибрати">✕</button>` : right}
       </div>`;
   }
 
@@ -880,41 +917,64 @@
     const days = await Promise.all([0, 1, 2].map(o => loadDay(o, false)));
     if (rid !== renderId) return;
     const items = days.flatMap(d => d.items).filter(x => isUpcoming(x.ev) && x.ev.ts * 1000 > Date.now() + 5 * MIN);
-    const slugs = [...new Set(items.map(x => x.slug))];
+
+    // Моделі (а з ними й результати сезону) — для майбутніх матчів і для подій активних експресів.
+    let active = FP.history.activeAccas();
+    const slugs = [...new Set([...items.map(x => x.slug), ...Object.values(active).flatMap(a => a.legs.map(l => l.slug))])]
+      .filter(s => LEAGUE_BY_SLUG.has(s));
     for (const slug of [...slugs.filter(s => !LEAGUE_BY_SLUG.get(s).cup), ...slugs.filter(s => LEAGUE_BY_SLUG.get(s).cup)]) {
       await ensureModel(slug);
       if (rid !== renderId) return;
     }
     await loadTeamStats(items);
     if (rid !== renderId) return;
-    const pool = items.map(x => ({ ...x, pred: predictionFor(x.slug, x.ev) })).filter(x => x.pred);
-    const { levels, doubles, triples } = buildAccas(pool);
-    state.accas = [...levels, ...doubles, ...triples];
 
-    let idx = 0;
-    const card = a => {
-      const i = idx++;
-      if (!a.legs.length) {
-        return `<section class="card acca-card"><div class="acca-title">${riskDots(a.risk)}<b>${esc(a.title)}</b></div>
+    // Експреси, у яких завершилась перша подія, ідуть у статистику; на їхнє місце — нові.
+    for (const cfg of ACCA_SLOTS) {
+      if (active[cfg.slot] && firstLegDone(active[cfg.slot])) FP.history.retire(cfg.slot);
+    }
+    active = FP.history.activeAccas();
+    const used = { events: new Set(), matches: new Set() };
+    Object.values(active).forEach(a => markUsed(a.legs, used));
+    const pool = items.map(x => ({ ...x, pred: predictionFor(x.slug, x.ev) })).filter(x => x.pred);
+    for (const cfg of ACCA_SLOTS) {
+      if (active[cfg.slot]) continue;
+      const a = buildAcca(pool, used, cfg);
+      if (!a) continue;
+      markUsed(a.legs, used);
+      FP.history.setActive(cfg.slot, a);
+      active[cfg.slot] = a;
+    }
+    state.accas = ACCA_SLOTS.map(cfg => active[cfg.slot] || null);
+
+    const card = (cfg, i) => {
+      const a = active[cfg.slot];
+      if (!a) {
+        return `<section class="card acca-card"><div class="acca-title">${cfg.risk ? riskDots(cfg.risk) : ''}<b>${esc(cfg.name)}</b></div>
           <p class="hint">Недостатньо відповідних матчів на найближчі 3 дні.</p></section>`;
       }
-      const t = accaTotals(a.legs);
+      const st = accaStatus(a);
+      const [label, cls] = ACCA_STATUS[st.s];
+      const first = a.legs[0];
+      const bookOdds = a.legs.every(l => l.odds) ? a.legs.reduce((s, l) => s * l.odds, 1) : null;
       return `
         <section class="card acca-card">
-          <div class="acca-title">${riskDots(a.risk)}<b>${esc(a.title)}</b><span>кф ${t.fair.toFixed(2)}</span></div>
-          <div class="acca-sub">Ймовірність ${t.p >= 0.01 ? pct(t.p) : '<1%'} · подій ${t.n}${t.odds ? ` · за кф DraftKings ${t.odds.toFixed(2)}` : ''}</div>
-          <div class="legs">${a.legs.map(l => legRow(l, false)).join('')}</div>
-          <div class="btn-row"><button class="btn ghost" data-load-acca="${i}">Завантажити в конструктор</button></div>
+          <div class="acca-title">${riskDots(a.risk)}<b>${esc(a.title)}</b><span>кф ${a.fair.toFixed(2)}</span></div>
+          <div class="acca-sub">Ймовірність ${a.p >= 0.01 ? pct(a.p) : '<1%'} · подій ${a.legs.length}${bookOdds ? ` · за кф DraftKings ${bookOdds.toFixed(2)}` : ''}
+            <span class="chip-st ${cls}">${label}${st.settledLegs ? ` · ${st.wins}/${a.legs.length}` : ''}</span></div>
+          <div class="legs">${a.legs.map((l, j) => legRow(l, false, st.legs[j])).join('')}</div>
+          <p class="hint">Новий експрес у цьому пункті з'явиться після завершення першої події: ${esc(first.home)} — ${esc(first.away)}, ${esc(dateOf(first.ts))} ${esc(timeOf(first.ts))}.</p>
+          ${a.legs.some(l => l.ts * 1000 > Date.now()) ? `<div class="btn-row"><button class="btn ghost" data-load-acca="${i}">Завантажити в конструктор</button></div>` : ''}
         </section>`;
     };
 
-    document.getElementById('accas').innerHTML = `
-      ${levels.map(card).join('')}
-      <h2 class="section-title">З 2 подій · кф від 3 до 8</h2>
-      ${doubles.map(card).join('')}
-      <h2 class="section-title">З 3 подій · кф від 8 до 25</h2>
-      ${triples.map(card).join('')}
-      <p class="hint pad">Коефіцієнт тут справедливий (без маржі). Букмекер на кожну подію дає зазвичай на 5–8% менше, тож реальний кф експресу буде нижчим: на 6 подіях — приблизно на третину. Ймовірність показує, як часто такий експрес заходить: 5% — приблизно раз на 20 спроб. Матчі в різних експресах по можливості не повторюються.</p>`;
+    let html = '';
+    for (const [cat, title] of Object.entries(ACCA_CATS)) {
+      html += `<h2 class="section-title">${esc(title)}</h2>`;
+      ACCA_SLOTS.forEach((cfg, i) => { if (cfg.cat === cat) html += card(cfg, i); });
+    }
+    document.getElementById('accas').innerHTML = html + `
+      <p class="hint pad">Події (матч + ставка) в 11 експресах не повторюються; один матч може траплятися з різними ставками. Коефіцієнт — справедливий (без маржі): букмекер на кожну подію дає на 5–8% менше. Ймовірність показує, як часто такий експрес заходить: 5% — приблизно раз на 20 спроб. Результати всіх експресів — у вкладці «Історія».</p>`;
   }
 
   // Події купону: видалення, введення кф, очищення, завантаження готового експресу.
@@ -923,8 +983,8 @@
     if (!b) return;
     if (b.dataset.remove) { FP.slip.remove(b.dataset.remove); renderSlip(); }
     else if (b.dataset.slipClear) { FP.slip.clear(); renderSlip(); }
-    else if (b.dataset.loadAcca != null && state.accas) {
-      FP.slip.setAll(state.accas[Number(b.dataset.loadAcca)].legs);
+    else if (b.dataset.loadAcca != null && state.accas && state.accas[Number(b.dataset.loadAcca)]) {
+      FP.slip.setAll(state.accas[Number(b.dataset.loadAcca)].legs.filter(l => l.ts * 1000 > Date.now()));
       renderSlip();
       window.scrollTo({ top: 0, behavior: 'smooth' });
       toast('Експрес завантажено в конструктор');
@@ -949,86 +1009,257 @@
   FP.slip.onChange(updateSlipBadge);
   updateSlipBadge();
 
-  // ---------- Історія прогнозів ----------
+  // ---------- Статистика прогнозів ----------
+  // Одиночні: основна рекомендація і цінна ставка кожного матчу (останній прогноз перед стартом).
+  // Експреси: усі 11 готових експресів — активні й замінені.
+  state.histTab = 'singles';
+  state.histPeriod = 30;
+
   async function viewHistory() {
     const rid = ++renderId;
-    setHeader('Історія');
-    const entries = FP.history.all();
-    if (!entries.length) {
-      $view.innerHTML = `<div class="empty">Історія порожня.<br>Додаток запам'ятовує свої прогнози перед матчами, а після матчів показує тут, скільки з них зіграло.</div>`;
+    setHeader('Статистика');
+    const singles = FP.history.all();
+    const accas = [...FP.history.archivedAccas(), ...Object.values(FP.history.activeAccas())];
+    if (!singles.length && !accas.length) {
+      $view.innerHTML = `<div class="empty">Статистика поки порожня.<br>Додаток запам'ятовує свої прогнози й експреси перед матчами, а після матчів показує тут, скільки з них зіграло.</div>`;
       return;
     }
     $view.innerHTML = '<div class="loading">Перевірка результатів…</div>';
 
-    const slugs = [...new Set(entries.map(e => e.slug))].filter(s => LEAGUE_BY_SLUG.has(s));
-    const results = new Map();
+    // Результати матчів беремо з даних сезонів відповідних турнірів.
+    const slugs = [...new Set([...singles.map(e => e.slug), ...accas.flatMap(a => a.legs.map(l => l.slug))])]
+      .filter(s => LEAGUE_BY_SLUG.has(s));
     await api.pool(slugs, 4, async slug => {
       try {
         const s = await api.season(slug);
-        for (const ev of s.events) if (isFinished(ev)) results.set(ev.id, ev);
+        s.events.forEach(ev => state.events.set(evKey(slug, ev.id), { slug, ev }));
       } catch {}
     });
     if (rid !== renderId) return;
+    state.hist = { singles, accas };
+    renderHistory();
+  }
 
-    const settled = [], pending = [];
-    for (const e of entries) {
-      const ev = results.get(e.id);
-      if (!ev) { if (e.ts * 1000 > Date.now() - 3 * 864e5) pending.push(e); continue; }
-      const h = ev.home.score, a = ev.away.score;
-      settled.push({ ...e, h, a, tipRes: model.settle(e.tip.key, h, a), valRes: e.value ? model.settle(e.value.key, h, a) : undefined });
+  const DONE = s => s === 'win' || s === 'loss';
+  const units = v => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`;
+  const pctOf = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : '—');
+  const inPeriod = ts => !state.histPeriod || ts * 1000 >= Date.now() - state.histPeriod * 864e5;
+
+  function singlesData() {
+    return state.hist.singles.filter(e => inPeriod(e.ts)).map(e => {
+      const tip = legStatus({ slug: e.slug, id: e.id, ts: e.ts, key: e.tip.key });
+      const val = e.value ? legStatus({ slug: e.slug, id: e.id, ts: e.ts, key: e.value.key }) : null;
+      return { ...e, tipSt: tip, valSt: val };
+    }).sort((a, b) => b.ts - a.ts);
+  }
+
+  function accasData() {
+    return state.hist.accas
+      .map(a => ({ ...a, st: accaStatus(a), lastTs: a.legs[a.legs.length - 1].ts }))
+      .filter(a => inPeriod(a.legs[0].ts))
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  // Рядок «зіграло X з N (Y%) · очікувалось Z%» з полоскою.
+  function rateRow(label, wins, n, expected) {
+    const w = n ? (wins / n) * 100 : 0;
+    return `
+      <div class="rate">
+        <div class="rate-head"><span>${esc(label)}</span><b>${n ? `${wins} з ${n} · ${pctOf(wins, n)}` : '—'}</b></div>
+        <div class="rate-bar"><i style="width:${w.toFixed(1)}%"></i>${expected != null && n ? `<em style="left:${(expected * 100).toFixed(1)}%" title="очікувалось"></em>` : ''}</div>
+        ${expected != null && n ? `<small>очікувалось ${Math.round(expected * 100)}%</small>` : ''}
+      </div>`;
+  }
+
+  function renderHistory() {
+    const tab = state.histTab;
+    const periods = [[7, '7 днів'], [30, '30 днів'], [0, 'Увесь час']];
+    const head = `
+      <div class="controls">
+        <div class="segmented">
+          <button class="${tab === 'singles' ? 'on' : ''}" data-htab="singles">Одиночні</button>
+          <button class="${tab === 'accas' ? 'on' : ''}" data-htab="accas">Експреси</button>
+        </div>
+        <div class="chips">${periods.map(([d, l]) => `<button class="chip ${state.histPeriod === d ? 'on' : ''}" data-hper="${d}">${l}</button>`).join('')}</div>
+      </div>`;
+    const foot = `
+      <div class="btn-row pad">
+        <button class="btn" data-export="${tab}">Завантажити таблицю (CSV)</button>
+        <button class="btn ghost" data-hclear="1">Очистити статистику</button>
+      </div>
+      <p class="hint pad">CSV відкривається в Excel, Google Таблицях чи Numbers. Об'єктивні висновки можна робити після кількох сотень ставок: на десятках результат сильно залежить від везіння.</p>`;
+    $view.innerHTML = head + (tab === 'singles' ? singlesHtml() : accasHtml()) + foot;
+  }
+
+  function singlesHtml() {
+    const rows = singlesData();
+    const tips = rows.filter(r => DONE(r.tipSt.s));
+    const tipWins = tips.filter(r => r.tipSt.s === 'win').length;
+    const tipExp = tips.length ? tips.reduce((s, r) => s + r.tip.p, 0) / tips.length : null;
+    const vals = rows.filter(r => r.value && DONE(r.valSt.s));
+    const valWins = vals.filter(r => r.valSt.s === 'win').length;
+    const valProfit = vals.reduce((s, r) => s + (r.valSt.s === 'win' ? r.value.odds - 1 : -1), 0);
+    const pending = rows.filter(r => !DONE(r.tipSt.s) && r.tipSt.s !== 'void').length;
+
+    const byLevel = [3, 2, 1].map(l => {
+      const list = tips.filter(r => r.tip.level === l);
+      return rateRow(`${['', 'Низька', 'Середня', 'Висока'][l]} впевненість`, list.filter(r => r.tipSt.s === 'win').length, list.length,
+        list.length ? list.reduce((s, r) => s + r.tip.p, 0) / list.length : null);
+    }).join('');
+
+    const leagues = new Map();
+    for (const r of tips) {
+      if (!leagues.has(r.slug)) leagues.set(r.slug, { w: 0, n: 0 });
+      const x = leagues.get(r.slug);
+      x.n++; if (r.tipSt.s === 'win') x.w++;
     }
-    settled.sort((x, y) => y.ts - x.ts);
+    const byLeague = [...leagues].sort((a, b) => b[1].n - a[1].n).map(([slug, x]) => `
+      <tr><td>${esc(leagueLabel(slug))}</td><td>${x.w} з ${x.n}</td><td><b>${pctOf(x.w, x.n)}</b></td></tr>`).join('');
 
-    const rate = list => {
-      const done = list.filter(x => x.tipRes === true || x.tipRes === false);
-      const hit = done.filter(x => x.tipRes).length;
-      return done.length ? { hit, n: done.length, pct: hit / done.length } : null;
-    };
-    const all = rate(settled);
-    const byLevel = [3, 2, 1].map(l => ({ l, r: rate(settled.filter(x => x.tip.level === l)) }));
-    const vals = settled.filter(x => x.value && (x.valRes === true || x.valRes === false || x.valRes === null));
-    const profit = vals.reduce((s, x) => s + (x.valRes === true ? x.value.odds - 1 : x.valRes === false ? -1 : 0), 0);
-    const tipsWithOdds = settled.filter(x => x.tip.odds && (x.tipRes === true || x.tipRes === false));
-    const tipProfit = tipsWithOdds.reduce((s, x) => s + (x.tipRes ? x.tip.odds - 1 : -1), 0);
-    const fmtR = r => (r ? `<b>${Math.round(r.pct * 100)}%</b> <small>${r.hit} з ${r.n}</small>` : '—');
-    const units = v => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`;
+    // Список за днями.
+    const byDay = new Map();
+    for (const r of rows.filter(r => r.tipSt.s !== 'pending')) {
+      const d = dateOf(r.ts);
+      if (!byDay.has(d)) byDay.set(d, []);
+      byDay.get(d).push(r);
+    }
+    const days = [...byDay].map(([d, list]) => {
+      const done = list.filter(r => DONE(r.tipSt.s));
+      const w = done.filter(r => r.tipSt.s === 'win').length;
+      return `
+        <div class="day-head"><b>${esc(d)}</b><span>${done.length ? `${w} з ${done.length}` : ''}</span></div>
+        ${list.map(r => `
+          <a class="hrow" href="#/match/${r.slug}/${r.id}">
+            <div class="hrow-main">
+              <small>${esc(leagueLabel(r.slug))}</small>
+              <span>${esc(r.home)} — ${esc(r.away)} ${r.tipSt.score ? `<b>${esc(r.tipSt.score)}</b>` : ''}</span>
+              <em>${esc(r.tip.short)} · ${pct(r.tip.p)}${r.value ? ` &nbsp;|&nbsp; цінна: ${esc(r.value.short)} @ ${r.value.odds.toFixed(2)} ${r.valSt && r.valSt.s !== 'pending' ? STATUS_ICON[r.valSt.s] || '' : ''}` : ''}</em>
+            </div>
+            <div class="hrow-st">${r.tipSt.s === 'live' ? '<span class="live">LIVE</span>' : STATUS_ICON[r.tipSt.s] || ''}</div>
+          </a>`).join('')}`;
+    }).join('');
 
-    $view.innerHTML = `
+    return `
       <section class="card">
-        <div class="league-stats">
-          <div>${fmtR(all)}<span>основні ставки зіграли</span></div>
-          <div><b class="${profit >= 0 ? 'ok' : 'bad'}">${vals.length ? units(profit) : '—'}</b><span>цінні ставки, прибуток в од.${vals.length ? ` (${vals.length})` : ''}</span></div>
-          <div><b>${pending.length}</b><span>очікують результату</span></div>
+        <div class="kpis">
+          <div><b>${pctOf(tipWins, tips.length)}</b><span>основні ставки<br>${tipWins} з ${tips.length}</span></div>
+          <div><b class="${valProfit >= 0 ? 'ok' : 'bad'}">${vals.length ? units(valProfit) : '—'}</b><span>цінні ставки, од.<br>${vals.length ? `${valWins} з ${vals.length} · ROI ${(valProfit / vals.length * 100).toFixed(0)}%` : 'ще немає'}</span></div>
+          <div><b>${pending}</b><span>очікують<br>результату</span></div>
         </div>
       </section>
-      <section class="card">
-        <h3>Влучність за рівнем впевненості</h3>
-        <table class="markets"><tbody>
-          ${byLevel.map(x => `<tr><td>${['', 'Низька', 'Середня', 'Висока'][x.l]}</td><td>${fmtR(x.r)}</td></tr>`).join('')}
-          ${tipsWithOdds.length ? `<tr><td>Основні ставки за кф букмекера (1 од. на кожну)</td><td><b class="${tipProfit >= 0 ? 'ok' : 'bad'}">${units(tipProfit)}</b> <small>${tipsWithOdds.length} ст.</small></td></tr>` : ''}
-          ${vals.length ? `<tr><td>Цінні ставки: ROI</td><td><b class="${profit >= 0 ? 'ok' : 'bad'}">${(profit / vals.length * 100).toFixed(1)}%</b></td></tr>` : ''}
-        </tbody></table>
-        <p class="hint">Записується останній прогноз перед стартом матчу. Об'єктивні висновки можна робити після кількох сотень ставок; на десятках результат сильно залежить від везіння.</p>
-      </section>
-      ${settled.length ? `<section class="card flush">
-        <div class="table-wrap"><table class="standings history">
-          <thead><tr><th class="tl">Матч</th><th>Рах.</th><th class="tl">Прогноз</th><th></th></tr></thead>
-          <tbody>${settled.slice(0, 60).map(x => `<tr>
-            <td class="tl"><small>${esc(dateOf(x.ts))} · ${esc(leagueLabel(x.slug))}</small><br>${esc(x.home)} — ${esc(x.away)}</td>
-            <td>${x.h}:${x.a}</td>
-            <td class="tl">${esc(x.tip.short)} <small>${pct(x.tip.p)}</small>${x.value ? `<br><small>цінна: ${esc(x.value.short)} @ ${x.value.odds.toFixed(2)} ${x.valRes === true ? '✓' : x.valRes === false ? '✗' : '↺'}</small>` : ''}</td>
-            <td>${x.tipRes === true ? '<i class="ok">✓</i>' : x.tipRes === false ? '<i class="bad">✗</i>' : '↺'}</td>
-          </tr>`).join('')}</tbody>
-        </table></div>
+      ${tips.length ? `<section class="card">
+        <h3>Основні ставки</h3>
+        ${rateRow('Усі', tipWins, tips.length, tipExp)}
+        ${byLevel}
+        <p class="hint">Зелена смуга — скільки зіграло, риска — скільки мало зіграти за прогнозом. Якщо смуга стабільно досягає риски, ймовірності додатка чесні.</p>
       </section>` : ''}
-      <div class="btn-row pad"><button id="hist-clear" class="btn ghost">Очистити історію</button></div>`;
-
-    document.getElementById('hist-clear').onclick = () => {
-      if (!confirm('Видалити всю історію прогнозів?')) return;
-      FP.history.clear();
-      viewHistory();
-    };
+      ${byLeague ? `<section class="card">
+        <h3>За турнірами</h3>
+        <table class="markets"><tbody>${byLeague}</tbody></table>
+      </section>` : ''}
+      ${days ? `<section class="card"><h3>По днях</h3>${days}</section>` : '<div class="empty">За цей період ще немає зіграних матчів.</div>'}`;
   }
+
+  function accasHtml() {
+    const list = accasData();
+    const settled = list.filter(a => DONE(a.st.s));
+    const wins = settled.filter(a => a.st.s === 'win').length;
+    const expected = settled.reduce((s, a) => s + a.st.p, 0);
+    const profit = settled.reduce((s, a) => s + (a.st.s === 'win' ? a.st.fair - 1 : -1), 0);
+    const legsDone = list.reduce((s, a) => s + a.st.settledLegs, 0);
+    const legsWon = list.reduce((s, a) => s + a.st.wins, 0);
+    const pending = list.filter(a => a.st.s === 'pending').length;
+
+    const byCat = Object.entries(ACCA_CATS).map(([cat, title]) => {
+      const c = settled.filter(a => a.cat === cat);
+      return rateRow(title, c.filter(a => a.st.s === 'win').length, c.length, c.length ? c.reduce((s, a) => s + a.st.p, 0) / c.length : null);
+    }).join('');
+
+    const bySlot = ACCA_SLOTS.map(cfg => {
+      const c = settled.filter(a => a.slot === cfg.slot);
+      const w = c.filter(a => a.st.s === 'win').length;
+      return `<tr><td>${esc(cfg.name)}</td><td>${c.length ? `${w} з ${c.length}` : '—'}</td><td>${c.length ? (c.reduce((s, a) => s + a.st.p, 0)).toFixed(1) : '—'}</td></tr>`;
+    }).join('');
+
+    const cards = list.slice(0, 40).map(a => {
+      const [label, cls] = ACCA_STATUS[a.st.s];
+      return `
+        <details class="hacca">
+          <summary>
+            <span class="chip-st ${cls}">${label}</span>
+            <b>${esc(a.title)}</b>
+            <span class="hacca-k">кф ${a.fair.toFixed(2)}</span>
+            <small>${esc(dateOf(a.legs[0].ts))} · ${a.st.wins}/${a.legs.length} подій</small>
+          </summary>
+          <div class="legs">${a.legs.map((l, j) => legRow(l, false, a.st.legs[j])).join('')}</div>
+        </details>`;
+    }).join('');
+
+    return `
+      <section class="card">
+        <div class="kpis">
+          <div><b>${wins} з ${settled.length}</b><span>експресів зайшло<br>очікувалось ${expected.toFixed(1)}</span></div>
+          <div><b class="${profit >= 0 ? 'ok' : 'bad'}">${settled.length ? units(profit) : '—'}</b><span>умовний прибуток, од.<br>за справедливим кф</span></div>
+          <div><b>${pctOf(legsWon, legsDone)}</b><span>подій зіграло<br>${legsWon} з ${legsDone}</span></div>
+        </div>
+        <p class="hint">У грі зараз: ${pending}. «Очікувалось» — скільки експресів мало зайти за ймовірностями додатка. Умовний прибуток — якщо ставити 1 од. на кожен експрес за справедливим кф; у букмекера кф нижчий.</p>
+      </section>
+      ${settled.length ? `<section class="card">
+        <h3>За типами</h3>
+        ${byCat}
+      </section>
+      <section class="card">
+        <h3>За пунктами</h3>
+        <table class="markets"><thead><tr><th>Експрес</th><th>Зайшло</th><th>Очікувалось</th></tr></thead><tbody>${bySlot}</tbody></table>
+      </section>` : ''}
+      ${cards ? `<section class="card"><h3>Усі експреси</h3>${cards}</section>` : '<div class="empty">За цей період експресів ще немає.</div>'}`;
+  }
+
+  // ---------- Експорт у CSV (роздільник «;» і десяткова кома — для українського Excel) ----------
+  function exportCsv(tab) {
+    const num = x => (x == null ? '' : String(+x.toFixed(3)).replace('.', ','));
+    const cell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const RES = { win: 'зіграла', loss: 'не зіграла', void: 'повернення', pending: 'очікує', live: 'йде', unknown: 'невідомо' };
+    let rows;
+    if (tab === 'singles') {
+      rows = [['Дата', 'Час', 'Турнір', 'Господарі', 'Гості', 'Рахунок', 'Прогноз', 'Ймовірність', 'Впевненість', 'Результат', 'Цінна ставка', 'Кф цінної', 'Результат цінної']];
+      for (const r of singlesData()) {
+        rows.push([FP.dateOfTs(r.ts), timeOf(r.ts), leagueLabel(r.slug), r.home, r.away, r.tipSt.score || '', r.tip.short,
+          num(r.tip.p), ['', 'низька', 'середня', 'висока'][r.tip.level], RES[r.tipSt.s],
+          r.value ? r.value.short : '', r.value ? num(r.value.odds) : '', r.valSt ? RES[r.valSt.s] : '']);
+      }
+    } else {
+      rows = [['Створено', 'Експрес', 'Подій', 'Кф (справедливий)', 'Ймовірність', 'Статус', 'Зіграло подій', 'Події']];
+      for (const a of accasData()) {
+        rows.push([new Date(a.createdAt).toLocaleString('uk-UA'), a.title, a.legs.length, num(a.fair), num(a.p), ACCA_STATUS[a.st.s][0],
+          `${a.st.wins}/${a.legs.length}`,
+          a.legs.map((l, j) => `${l.home} — ${l.away}: ${l.short} (${RES[a.st.legs[j].s]})`).join(' | ')]);
+      }
+    }
+    const csv = '﻿' + rows.map(r => r.map(cell).join(';')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `statystyka-${tab === 'singles' ? 'odynochni' : 'ekspresy'}-${FP.localDate(0)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
+  $view.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b || !state.hist) return;
+    if (b.dataset.htab) { state.histTab = b.dataset.htab; renderHistory(); }
+    else if (b.dataset.hper != null) { state.histPeriod = Number(b.dataset.hper); renderHistory(); }
+    else if (b.dataset.export) exportCsv(b.dataset.export);
+    else if (b.dataset.hclear) {
+      if (!confirm('Видалити всю статистику прогнозів і експресів?')) return;
+      FP.history.clear();
+      state.hist = null;
+      viewHistory();
+    }
+  });
 
   // ---------- Довідка ----------
   function viewInfo(focus) {

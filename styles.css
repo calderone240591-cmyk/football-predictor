@@ -356,6 +356,39 @@ a.acca-row { color: inherit; text-decoration: none; }
 .risk.r1 { color: var(--hi); } .risk.r2 { color: var(--hi); } .risk.r3 { color: var(--mid); }
 .risk.r4 { color: var(--lo); } .risk.r5 { color: var(--lo); }
 
+.chip-st { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 6px; font-size: 11px; font-weight: 700; background: var(--surface-2); color: var(--muted); }
+.chip-st.win { background: color-mix(in srgb, var(--hi) 16%, transparent); color: var(--hi); }
+.chip-st.loss { background: color-mix(in srgb, var(--lo) 14%, transparent); color: var(--lo); }
+.leg-st b { font-size: 18px; }
+.leg.st-win .leg-main b { color: var(--hi); }
+.leg.st-loss .leg-main b { color: var(--lo); text-decoration: line-through; }
+
+/* ---------- статистика ---------- */
+.kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+.kpis div { display: grid; gap: 2px; }
+.kpis b { font-size: 20px; }
+.kpis span { font-size: 11px; color: var(--muted); line-height: 1.3; }
+.rate { margin: 10px 0 12px; }
+.rate-head { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.rate-bar { position: relative; height: 8px; border-radius: 4px; background: var(--surface-2); margin: 5px 0 2px; overflow: visible; }
+.rate-bar i { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--hi); }
+.rate-bar em { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text); border-radius: 1px; }
+.rate small { font-size: 11px; color: var(--muted); }
+.day-head { display: flex; justify-content: space-between; padding: 12px 0 4px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.day-head span { color: var(--muted); }
+.hrow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; }
+.hrow-main { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.hrow-main small { font-size: 11px; color: var(--muted); }
+.hrow-main span { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hrow-main em { font-style: normal; font-size: 12px; color: var(--muted); }
+.hrow-st { font-size: 18px; flex: none; }
+.hacca { border-top: 1px solid var(--line); }
+.hacca summary { list-style: none; cursor: pointer; padding: 10px 0; display: grid; grid-template-columns: auto 1fr auto; gap: 2px 8px; align-items: center; }
+.hacca summary::-webkit-details-marker { display: none; }
+.hacca summary .chip-st { margin: 0; }
+.hacca summary small { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+.hacca-k { font-weight: 700; }
+
 /* ---------- ліги ---------- */
 .league-list { display: grid; gap: 8px; }
 .league-item {
