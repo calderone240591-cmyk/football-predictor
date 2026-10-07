@@ -301,6 +301,59 @@ a.acca-row { color: inherit; text-decoration: none; }
 }
 .gloss-link { display: inline-block; margin-top: 10px; font-size: 13px; text-decoration: none; }
 
+/* ---------- експреси ---------- */
+.tabbar a { position: relative; }
+.tab-count {
+  position: absolute; top: 3px; left: calc(50% + 6px); min-width: 17px; height: 17px; padding: 0 4px;
+  border-radius: 9px; background: var(--accent); color: var(--accent-ink);
+  font: 700 10px/17px system-ui, sans-serif; font-style: normal; text-align: center;
+}
+.tab-count[hidden] { display: none; }
+
+.add {
+  border: 1px solid var(--line); background: var(--surface); color: var(--accent);
+  border-radius: 8px; min-width: 30px; height: 28px; padding: 0 8px; font-weight: 700; cursor: pointer;
+}
+.add.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.add.wide { height: 36px; padding: 0 14px; }
+.add-cell { width: 38px; text-align: right; }
+.pick { position: relative; padding-right: 44px; }
+.pick .add { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom)); transform: translate(-50%, 20px);
+  max-width: calc(100% - 32px); width: max-content; padding: 10px 14px; border-radius: 12px;
+  background: var(--text); color: var(--bg); font-size: 13px; opacity: 0; pointer-events: none;
+  transition: opacity .2s, transform .2s; z-index: 20;
+}
+.toast a { color: var(--accent); font-weight: 700; margin-left: 6px; }
+.toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+
+.legs { display: grid; gap: 6px; }
+.leg { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+.leg:first-child { border-top: 0; }
+.leg.started { opacity: .5; }
+.leg-main { flex: 1; min-width: 0; display: grid; color: inherit; text-decoration: none; }
+.leg-main small, .leg-num small { font-size: 11px; color: var(--muted); }
+.leg-main span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leg-main b { font-size: 14px; color: var(--accent); }
+.leg-num { display: grid; text-align: right; flex: none; min-width: 44px; }
+.leg-odds { width: 64px; flex: none; padding: 6px 8px; }
+.leg-x { flex: none; border: 0; background: transparent; color: var(--muted); font-size: 16px; width: 28px; height: 28px; cursor: pointer; }
+
+.totals { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); text-align: center; }
+.totals div { display: grid; }
+.totals span { font-size: 11px; color: var(--muted); }
+.totals b { font-size: 17px; }
+
+.acca-title { display: flex; align-items: center; gap: 8px; }
+.acca-title b { font-size: 16px; }
+.acca-title > span:last-child { margin-left: auto; font-weight: 800; font-size: 17px; }
+.acca-sub { font-size: 13px; color: var(--muted); margin: 2px 0 8px; }
+.risk { letter-spacing: 1px; font-size: 11px; }
+.risk.r1 { color: var(--hi); } .risk.r2 { color: var(--hi); } .risk.r3 { color: var(--mid); }
+.risk.r4 { color: var(--lo); } .risk.r5 { color: var(--lo); }
+
 /* ---------- ліги ---------- */
 .league-list { display: grid; gap: 8px; }
 .league-item {

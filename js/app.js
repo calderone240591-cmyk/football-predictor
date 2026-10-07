@@ -191,6 +191,7 @@
     if (h.startsWith('#/league')) return 'leagues';
     if (h.startsWith('#/settings') || h.startsWith('#/info')) return 'info';
     if (h.startsWith('#/history')) return 'history';
+    if (h.startsWith('#/express')) return 'express';
     return 'home';
   }
 
@@ -335,6 +336,7 @@
         <div class="acca-head"><b>Експрес дня ${help('acca')}</b><span>ймовірність ${pct(p)} · справедливий кф ${fair(p)}</span></div>
         ${picks.map(x => `<div class="acca-row"><span>${esc(x.ev.home.short || x.ev.home.name)} — ${esc(x.ev.away.short || x.ev.away.name)}</span><b>${esc(x.pred.tip.short)}</b></div>`).join('')}
         <p class="hint">Кожна подія в експресі множить ризик. Ставте лише тоді, коли кф букмекера вищий за справедливий.</p>
+        <a class="gloss-link" href="#/express">5 експресів з різним ризиком і конструктор →</a>
       </section>`;
   }
 
@@ -409,7 +411,56 @@
     renderMatch(slug, ev, pred, lineups);
   }
 
+  // Кнопка додавання ринку в купон експресу (лише для матчів, що ще не почались).
+  const addBtn = (ev, key, label) => (isUpcoming(ev)
+    ? `<button class="add ${label ? 'wide' : ''} ${FP.slip.has(ev.id, key) ? 'on' : ''}" data-add="${esc(key)}" ${label ? `data-label="${esc(label)}"` : ''} aria-label="Додати в експрес">${FP.slip.has(ev.id, key) ? '✓' : '+'}${label ? ` ${esc(label)}` : ''}</button>`
+    : '');
+
+  function refreshAddButtons() {
+    const cm = state.currentMatch;
+    if (!cm) return;
+    document.querySelectorAll('[data-add]').forEach(b => {
+      const on = FP.slip.has(cm.ev.id, b.dataset.add);
+      b.classList.toggle('on', on);
+      b.textContent = (on ? '✓' : '+') + (b.dataset.label ? ` ${b.dataset.label}` : '');
+    });
+  }
+
+  function addFromMatch(key) {
+    const cm = state.currentMatch;
+    if (!cm) return;
+    const mk = cm.pred.markets.find(x => x.key === key);
+    if (!mk) return;
+    const res = FP.slip.toggle({
+      slug: cm.slug, id: cm.ev.id, ts: cm.ev.ts,
+      home: cm.ev.home.short || cm.ev.home.name, away: cm.ev.away.short || cm.ev.away.name,
+      key, short: mk.short, long: mk.long, p: mk.p, odds: mk.odds || null,
+    });
+    refreshAddButtons();
+    toast({
+      added: `Додано в експрес: ${mk.short}`,
+      replaced: `Замінено в експресі на ${mk.short} — з одного матчу лише одна подія`,
+      removed: `Прибрано з експресу: ${mk.short}`,
+    }[res]);
+  }
+
+  let toastTimer = null;
+  function toast(msg) {
+    let el = document.getElementById('toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'toast';
+      el.className = 'toast';
+      document.body.appendChild(el);
+    }
+    el.innerHTML = `${esc(msg)} <a href="#/express">Купон →</a>`;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+  }
+
   function renderMatch(slug, ev, pred, lineups) {
+    state.currentMatch = { slug, ev, pred };
     const l = LEAGUE_BY_SLUG.get(slug);
     const p = pred.prob;
     const showScore = ev.state !== 'pre';
@@ -443,6 +494,7 @@
         </div>
         ${pred.alternatives.length ? `<div class="alts">Також варто розглянути: ${pred.alternatives.map(x => `<span>${esc(x.short)} ${pct(x.p)}</span>`).join('')}</div>` : ''}
         ${pred.value ? `<div class="value-pick">Цінна ставка ${help('value')}: <b>${esc(pred.value.long)}</b> за кф ${pred.value.odds.toFixed(2)}, перевага +${(pred.value.edge * 100).toFixed(1)}%</div>` : ''}
+        ${isUpcoming(ev) ? `<div class="btn-row">${addBtn(ev, pred.tip.key, 'в експрес')}</div>` : ''}
         <a class="gloss-link" href="#/info/markets">Що означають ТБ, ІТ, Ф1 та інші позначення →</a>
       </section>
 
@@ -482,7 +534,7 @@
       <section class="card">
         <h3>Найкращі варіанти по ринках</h3>
         <div class="picks">${pred.groups.filter(g => g.pick).map(g => `
-          <div class="pick"><span>${esc(g.name)}</span><b>${esc(g.pick.short)}</b><i>${pct(g.pick.p)} · кф ${fair(g.pick.p)}</i></div>`).join('')}
+          <div class="pick"><span>${esc(g.name)}</span><b>${esc(g.pick.short)}</b><i>${pct(g.pick.p)} · кф ${fair(g.pick.p)}</i>${addBtn(ev, g.pick.key)}</div>`).join('')}
         </div>
         <p class="hint">Найімовірніший варіант у кожній групі з ймовірністю 55–85%. Кутові й картки — орієнтовна оцінка за сезонною статистикою команд.</p>
       </section>
@@ -496,7 +548,7 @@
               <tbody>${g.list.map(x => `
                 <tr class="${x.key === pred.tip.key ? 'sel' : ''}"><td>${esc(x.long)}</td>
                   <td><div class="pbar"><i style="width:${(x.p * 100).toFixed(1)}%"></i><span>${pct(x.p)}</span></div></td>
-                  <td>${fair(x.p)}</td></tr>`).join('')}
+                  <td>${fair(x.p)}</td><td class="add-cell">${addBtn(ev, x.key)}</td></tr>`).join('')}
               </tbody>
             </table>
           </details>`).join('')}
@@ -659,6 +711,189 @@
       <p class="hint pad">Атк/Обр — індекси сили з урахуванням суперників (1.00 — середній рівень турніру). Форма — від старіших матчів до свіжіших.</p>`;
   }
 
+  // ---------- Експреси ----------
+  // Рівні ризику для готових експресів: цільовий коефіцієнт і орієнтовна кількість подій.
+  // Ймовірність окремої події підбирається так, щоб за n подій вийти на цільовий кф.
+  const ACCA_LEVELS = [
+    { name: 'Надійний',      risk: 1, target: 2,  n: 3 },
+    { name: 'Помірний',      risk: 2, target: 3.5, n: 4 },
+    { name: 'Збалансований', risk: 3, target: 6,  n: 5 },
+    { name: 'Ризикований',   risk: 4, target: 10, n: 5 },
+    { name: 'Високий ризик', risk: 5, target: 20, n: 6 },
+  ];
+  // Ринки для експресів: лише основні, без таймів, кутових і карток (там модель орієнтовна).
+  const ACCA_GROUPS = new Set(['Результат', 'Тотал голів', 'Обидві заб\'ють', 'Фори', 'Індивідуальні тотали', 'Комбіновані']);
+  const ACCA_EXCLUDE = new Set(['12', 'DNB1', 'DNB2', 'O05', 'HO05', 'AO05']);
+
+  const legOdds = l => (l.userOdds > 1 ? l.userOdds : l.odds > 1 ? l.odds : null);
+
+  function buildAccas(pool) {
+    const used = new Set();
+    return ACCA_LEVELS.map(level => {
+      const ideal = Math.pow(level.target, -1 / level.n);
+      // Для кожного матчу — ринок з ймовірністю, найближчою до потрібної.
+      const options = [];
+      for (const { slug, ev, pred } of pool) {
+        let best = null;
+        for (const m of pred.markets) {
+          if (!ACCA_GROUPS.has(m.group) || ACCA_EXCLUDE.has(m.key)) continue;
+          if (Math.abs(m.p - ideal) > 0.1 || m.p > 0.9) continue;
+          const score = -Math.abs(m.p - ideal) + Math.max(0, m.edge || 0);
+          if (!best || score > best.score) best = { m, score };
+        }
+        if (best) options.push({ slug, ev, m: best.m, score: best.score + (used.has(ev.id) ? -1 : 0) + (pred.lowData ? -0.5 : 0) });
+      }
+      options.sort((a, b) => b.score - a.score);
+      const legs = [];
+      let odds = 1;
+      for (const o of options) {
+        if (odds >= level.target || legs.length >= level.n + 3) break;
+        legs.push(o);
+        odds /= o.m.p;
+      }
+      if (odds < level.target * 0.9) return { level, legs: [] };
+      legs.forEach(o => used.add(o.ev.id));
+      return {
+        level,
+        legs: legs.sort((a, b) => a.ev.ts - b.ev.ts).map(({ slug, ev, m }) => ({
+          slug, id: ev.id, ts: ev.ts, home: ev.home.short || ev.home.name, away: ev.away.short || ev.away.name,
+          key: m.key, short: m.short, long: m.long, p: m.p, odds: m.odds || null,
+        })),
+      };
+    });
+  }
+
+  function accaTotals(legs) {
+    const live = legs.filter(l => l.ts * 1000 > Date.now());
+    const p = live.reduce((s, l) => s * l.p, 1);
+    const allOdds = live.length && live.every(l => legOdds(l));
+    const odds = allOdds ? live.reduce((s, l) => s * legOdds(l), 1) : null;
+    return { n: live.length, started: legs.length - live.length, p, fair: 1 / p, odds, edge: odds ? p * odds - 1 : null };
+  }
+
+  const riskDots = r => `<span class="risk r${r}">${'●'.repeat(r)}${'○'.repeat(5 - r)}</span>`;
+
+  function legRow(l, editable) {
+    const started = l.ts * 1000 <= Date.now();
+    return `
+      <div class="leg ${started ? 'started' : ''}">
+        <a href="#/match/${l.slug}/${l.id}" class="leg-main">
+          <small>${esc(dateOf(l.ts))} ${esc(timeOf(l.ts))}${started ? ' · матч почався' : ''}</small>
+          <span>${esc(l.home)} — ${esc(l.away)}</span>
+          <b>${esc(l.short)}</b>
+        </a>
+        <div class="leg-num"><b>${pct(l.p)}</b><small>спр. ${fair(l.p)}</small></div>
+        ${editable ? `
+          <input class="leg-odds" data-odds="${esc(l.id)}" type="number" inputmode="decimal" step="0.01" min="1.01" placeholder="кф" value="${legOdds(l) ? legOdds(l).toFixed(2) : ''}">
+          <button class="leg-x" data-remove="${esc(l.id)}" aria-label="Прибрати">✕</button>` : `<div class="leg-num"><b>${l.odds ? l.odds.toFixed(2) : '—'}</b><small>кф DK</small></div>`}
+      </div>`;
+  }
+
+  function slipTotalsHtml() {
+    const t = accaTotals(FP.slip.all());
+    if (!t.n) return '<p class="hint">Немає подій, що ще не почались.</p>';
+    const v = t.odds ? model.value(t.p, t.odds) : null;
+    return `
+      <div class="totals">
+        <div><span>Подій</span><b>${t.n}</b></div>
+        <div><span>Ймовірність</span><b>${t.p >= 0.01 ? pct(t.p) : '<1%'}</b></div>
+        <div><span>Справедливий кф</span><b>${t.fair.toFixed(2)}</b></div>
+        <div><span>Ваш кф</span><b>${t.odds ? t.odds.toFixed(2) : '—'}</b></div>
+      </div>
+      ${v ? `<p class="value-out">${v.edge > 0
+        ? `<span class="ok">Експрес вигідний: перевага +${(v.edge * 100).toFixed(1)}%.</span> Розмір ставки: до <b>${(v.kelly * 100).toFixed(1)}%</b> банку.`
+        : `<span class="bad">Експрес невигідний: ${(v.edge * 100).toFixed(1)}%.</span> Кф букмекера нижчий за справедливий.`}</p>`
+        : '<p class="hint">Введіть коефіцієнти свого букмекера для кожної події, щоб перевірити, чи вигідний експрес. Там, де є, підставлено кф DraftKings.</p>'}
+      ${t.started ? `<p class="hint">Подій, що вже почались: ${t.started}. Вони не враховуються.</p>` : ''}`;
+  }
+
+  function renderSlip() {
+    const $s = document.getElementById('slip');
+    if (!$s) return;
+    const legs = FP.slip.all().sort((a, b) => a.ts - b.ts);
+    $s.innerHTML = legs.length ? `
+      <div class="legs">${legs.map(l => legRow(l, true)).join('')}</div>
+      <div id="slip-totals">${slipTotalsHtml()}</div>
+      <div class="btn-row"><button class="btn ghost" data-slip-clear="1">Очистити купон</button></div>` : `
+      <p class="hint top">Купон порожній. Додавайте події кнопкою <b>+</b> на екрані матчу (у рекомендованій ставці, найкращих варіантах або в «Усіх ринках») чи завантажте готовий експрес нижче.</p>`;
+  }
+
+  async function viewExpress() {
+    const rid = ++renderId;
+    setHeader('Експреси');
+    $view.innerHTML = `
+      <section class="card">
+        <h3>Мій експрес ${help('acca')}</h3>
+        <div id="slip"></div>
+      </section>
+      <h2 class="section-title">Готові експреси на 3 дні</h2>
+      <div id="accas"><div class="loading">Аналіз матчів найближчих днів…</div></div>`;
+    renderSlip();
+
+    // Матчі на 3 дні, моделі, статистика — усе з кешу, якщо вже завантажувалось.
+    const days = await Promise.all([0, 1, 2].map(o => loadDay(o, false)));
+    if (rid !== renderId) return;
+    const items = days.flatMap(d => d.items).filter(x => isUpcoming(x.ev) && x.ev.ts * 1000 > Date.now() + 5 * MIN);
+    const slugs = [...new Set(items.map(x => x.slug))];
+    for (const slug of [...slugs.filter(s => !LEAGUE_BY_SLUG.get(s).cup), ...slugs.filter(s => LEAGUE_BY_SLUG.get(s).cup)]) {
+      await ensureModel(slug);
+      if (rid !== renderId) return;
+    }
+    await loadTeamStats(items);
+    if (rid !== renderId) return;
+    const pool = items.map(x => ({ ...x, pred: predictionFor(x.slug, x.ev) })).filter(x => x.pred);
+    const accas = buildAccas(pool);
+    state.accas = accas;
+
+    document.getElementById('accas').innerHTML = accas.map((a, i) => {
+      if (!a.legs.length) {
+        return `<section class="card acca-card"><div class="acca-title">${riskDots(a.level.risk)}<b>${a.level.name}</b></div>
+          <p class="hint">Недостатньо відповідних матчів на найближчі 3 дні.</p></section>`;
+      }
+      const t = accaTotals(a.legs);
+      return `
+        <section class="card acca-card">
+          <div class="acca-title">${riskDots(a.level.risk)}<b>${a.level.name}</b><span>кф ${t.fair.toFixed(2)}</span></div>
+          <div class="acca-sub">Ймовірність ${t.p >= 0.01 ? pct(t.p) : '<1%'} · подій ${t.n}${t.odds ? ` · за кф DraftKings ${t.odds.toFixed(2)}` : ''}</div>
+          <div class="legs">${a.legs.map(l => legRow(l, false)).join('')}</div>
+          <div class="btn-row"><button class="btn ghost" data-load-acca="${i}">Завантажити в конструктор</button></div>
+        </section>`;
+    }).join('') + `
+      <p class="hint pad">Коефіцієнт тут справедливий (без маржі). Букмекер на кожну подію дає зазвичай на 5–8% менше, тож реальний кф експресу буде нижчим: на 6 подіях — приблизно на третину. Ймовірність показує, як часто такий експрес заходить: 5% — приблизно раз на 20 спроб.</p>`;
+  }
+
+  // Події купону: видалення, введення кф, очищення, завантаження готового експресу.
+  $view.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.remove) { FP.slip.remove(b.dataset.remove); renderSlip(); }
+    else if (b.dataset.slipClear) { FP.slip.clear(); renderSlip(); }
+    else if (b.dataset.loadAcca != null && state.accas) {
+      FP.slip.setAll(state.accas[Number(b.dataset.loadAcca)].legs);
+      renderSlip();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      toast('Експрес завантажено в конструктор');
+    }
+  });
+  $view.addEventListener('input', e => {
+    const id = e.target.dataset && e.target.dataset.odds;
+    if (!id) return;
+    const v = parseFloat(String(e.target.value).replace(',', '.'));
+    FP.slip.setOdds(id, v > 1 ? v : null);
+    const $t = document.getElementById('slip-totals');
+    if ($t) $t.innerHTML = slipTotalsHtml();
+  });
+
+  function updateSlipBadge() {
+    const $c = document.getElementById('slip-count');
+    if (!$c) return;
+    const n = FP.slip.all().length;
+    $c.textContent = n;
+    $c.hidden = !n;
+  }
+  FP.slip.onChange(updateSlipBadge);
+  updateSlipBadge();
+
   // ---------- Історія прогнозів ----------
   async function viewHistory() {
     const rid = ++renderId;
@@ -794,7 +1029,8 @@
           <li>Після кожного зіграного матчу рейтинги команд і прогнози перераховуються автоматично.</li>
           <li>Інформації про травми в безкоштовних джерелах немає. Її частково враховують коефіцієнти букмекера, з якими поєднується прогноз.</li>
         </ul>
-        <div class="btn-row"><button id="clear" class="btn ghost">Очистити кеш</button></div>
+        <p class="hint">Кеш — збережені на телефоні дані (матчі, таблиці, статистика), щоб додаток відкривався швидко і не завантажував усе щоразу заново. Зазвичай його чіпати не треба. Кнопка потрібна, лише якщо дані виглядають застарілими чи неправильними: тоді все завантажиться наново. Історія прогнозів і купон експресу не зітруться.</p>
+        <div class="btn-row"><button id="clear" class="btn ghost">Завантажити дані наново</button></div>
       </section>
 
       <section class="card disclaimer">
@@ -807,7 +1043,8 @@
       state.models.clear();
       state.standings.clear();
       state.lineups.clear();
-      document.getElementById('clear').textContent = 'Кеш очищено';
+      state.teamStats.clear();
+      document.getElementById('clear').textContent = 'Готово — дані завантажаться наново';
     };
 
     // Перехід до конкретного терміна (#/info/edge) — прокручуємо і підсвічуємо його.
@@ -836,6 +1073,7 @@
       case 'info': return viewInfo(parts[1]);
       case 'settings': return viewInfo();
       case 'history': return viewHistory();
+      case 'express': return viewExpress();
       default: return viewHome();
     }
   }
@@ -843,7 +1081,9 @@
   $view.addEventListener('click', e => {
     const b = e.target.closest('button');
     if (!b) return;
-    if (b.dataset.day) {
+    if (b.dataset.add) {
+      addFromMatch(b.dataset.add);
+    } else if (b.dataset.day) {
       state.dayOffset = Number(b.dataset.day);
       viewHome();
     } else if (b.dataset.league) {
