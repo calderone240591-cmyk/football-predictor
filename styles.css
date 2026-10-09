@@ -389,6 +389,29 @@ a.acca-row { color: inherit; text-decoration: none; }
 .hacca summary small { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
 .hacca-k { font-weight: 700; }
 
+.rec-tag { font-size: 10px; padding: 0 5px; border-radius: 4px; background: var(--surface-2); color: var(--muted); margin-left: 4px; }
+.pchips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.pchip { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--surface-2); color: var(--muted); white-space: nowrap; }
+.pchip.win { background: color-mix(in srgb, var(--hi) 14%, transparent); color: var(--hi); }
+.pchip.loss { background: color-mix(in srgb, var(--lo) 12%, transparent); color: var(--lo); }
+.pchip i { font-style: normal; }
+.band-sum { margin: -6px 0 10px; font-size: 12px; color: var(--muted); }
+
+/* розділ «Кф 1.64–9.99» */
+.band-card { padding: 10px 12px; }
+.band-head { display: grid; gap: 1px; color: inherit; text-decoration: none; margin-bottom: 4px; }
+.band-head small { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
+.band-head small img { width: 13px; height: 13px; object-fit: contain; }
+.band-head span { font-weight: 600; font-size: 14px; }
+.band-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.band-row b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent); }
+.band-k { flex: none; width: 74px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.band-p { flex: none; width: 38px; text-align: right; color: var(--muted); font-size: 13px; }
+.band-o { flex: none; width: 54px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.band-o small { font-size: 9px; font-weight: 500; color: var(--muted); margin-left: 2px; }
+.band-row .badge { margin-left: 0; }
+.empty-band em { color: var(--muted); font-size: 12px; }
+
 /* ---------- ліги ---------- */
 .league-list { display: grid; gap: 8px; }
 .league-item {

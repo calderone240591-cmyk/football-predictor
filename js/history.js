@@ -35,20 +35,42 @@ FP.history = (() => {
   }
 
   // ---------- одиночні ----------
+  const r3 = x => +x.toFixed(3);
+
+  function entryOf(slug, ev, pred) {
+    return {
+      slug, ts: ev.ts,
+      home: ev.home.short || ev.home.name, away: ev.away.short || ev.away.name,
+      tip: { key: pred.tip.key, short: pred.tip.short, p: r3(pred.tip.p), level: pred.tip.conf.level, odds: pred.tip.odds || null },
+      value: pred.value ? { key: pred.value.key, short: pred.value.short, p: r3(pred.value.p), odds: pred.value.odds } : null,
+      // Найкращі варіанти по групах ринків.
+      picks: pred.groups.filter(g => g.pick).map(g => ({ group: g.name, key: g.pick.key, short: g.pick.short, p: r3(g.pick.p) })),
+      // Рекомендації в діапазонах кф 1.64–9.99.
+      bands: pred.bands.filter(b => b.pick).map(b => ({
+        band: `${b.lo}–${b.hi}`, key: b.pick.key, short: b.pick.short, p: r3(b.pick.p),
+        odds: b.pick.odds || null, k: r3(b.pick.odds || 1 / b.pick.p), value: b.isValue,
+      })),
+    };
+  }
+
   // Оновлюємо запис до самого старту: фіксується останній передматчевий прогноз.
   function record(slug, ev, pred) {
     if (ev.ts * 1000 <= Date.now()) return;
     const prev = data[ev.id];
-    const next = {
-      slug, ts: ev.ts,
-      home: ev.home.short || ev.home.name, away: ev.away.short || ev.away.name,
-      tip: { key: pred.tip.key, short: pred.tip.short, p: +pred.tip.p.toFixed(3), level: pred.tip.conf.level, odds: pred.tip.odds || null },
-      value: pred.value ? { key: pred.value.key, short: pred.value.short, p: +pred.value.p.toFixed(3), odds: pred.value.odds } : null,
-    };
+    const next = entryOf(slug, ev, pred);
     if (prev && JSON.stringify(prev) === JSON.stringify(next)) return;
     data[ev.id] = next;
     saveSingles();
   }
+
+  // Відтворений прогноз для вже зіграного матчу, якого немає в журналі (рахується за даними до матчу).
+  function recordReconstructed(slug, ev, pred) {
+    if (data[ev.id]) return;
+    data[ev.id] = { ...entryOf(slug, ev, pred), rec: true };
+    saveSingles();
+  }
+
+  const has = id => !!data[id];
 
   const all = () => Object.entries(data).map(([id, x]) => ({ id, ...x }));
 
@@ -75,5 +97,5 @@ FP.history = (() => {
     try { localStorage.removeItem(KEY); localStorage.removeItem(ACCA_KEY); } catch {}
   }
 
-  return { record, all, activeAccas, archivedAccas, setActive, retire, clear };
+  return { record, recordReconstructed, has, all, activeAccas, archivedAccas, setActive, retire, clear };
 })();

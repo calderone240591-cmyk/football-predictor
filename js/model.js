@@ -32,8 +32,9 @@ FP.model = (() => {
   // prior(teamId) → { att, def } — відправна точка; null — середній рівень (1, 1).
   // previous — результати минулого сезону: беруть участь із меншою вагою (через давність).
   // Нормалізація (середня команда = 1.00) рахується лише по командах поточного сезону.
-  function fit(events, previous, prior, priorGames, normalize) {
-    const now = Date.now() / 1000;
+  // asOf (секунди) — рахувати ваги матчів станом на цей момент (для відтворення минулих прогнозів).
+  function fit(events, previous, prior, priorGames, normalize, asOf) {
+    const now = asOf || Date.now() / 1000;
     const current = new Set();
     for (const e of events) { current.add(e.home.id); current.add(e.away.id); }
     const matches = events.concat(previous || []).filter(isResult).map(e => ({
@@ -107,7 +108,7 @@ FP.model = (() => {
 
   // league — запис з FP.LEAGUES; domestic — Map teamId → { att, def, q } з рейтингів чемпіонатів;
   // previous — результати минулого сезону того ж чемпіонату (для єврокубків не використовуються).
-  function build(league, events, domestic, previous) {
+  function build(league, events, domestic, previous, asOf) {
     let prior = null;
     if (league.cup) {
       prior = id => {
@@ -121,7 +122,7 @@ FP.model = (() => {
       for (const e of previous) { before.add(e.home.id); before.add(e.away.id); }
       prior = id => (before.has(id) ? null : { att: 0.85, def: 1.15 });
     }
-    const f = fit(events, league.cup ? null : previous, prior, league.cup ? CUP_PRIOR_GAMES : PRIOR_GAMES, !league.cup);
+    const f = fit(events, league.cup ? null : previous, prior, league.cup ? CUP_PRIOR_GAMES : PRIOR_GAMES, !league.cup, asOf);
     const stats = teamStats(events);
     const teams = new Map();
     for (const id of f.current) {
@@ -315,6 +316,10 @@ FP.model = (() => {
   const TIP_GROUPS = new Set([G.RES, G.TOT, G.BTTS, G.HCP, G.TT]);
   const TIP_EXCLUDE = new Set(['12', 'DNB1', 'DNB2', 'O05', 'HO05', 'AO05']);
 
+  // Діапазони коефіцієнтів для розділу «Кф 1.64–9.99» і ринки, з яких обираються рекомендації.
+  const ODDS_BANDS = [[1.64, 2.5], [2.5, 4.5], [4.5, 9.99]];
+  const BAND_GROUPS = new Set([G.RES, G.TOT, G.BTTS, G.HCP, G.TT, G.COMBO]);
+
   // Ймовірність ринку з урахуванням повернень: P(виграш) / P(не повернення).
   function scoreMarketProb(g, mk) {
     let win = 0, push = 0;
@@ -487,9 +492,20 @@ FP.model = (() => {
       return { name, list, pick };
     }).filter(x => x.list.length);
 
+    // Рекомендації в діапазонах коефіцієнтів 1.64–9.99: у кожному діапазоні — цінна ставка
+    // (якщо кф букмекера дає перевагу), інакше найімовірніший варіант. Кф — букмекерський, якщо є, інакше справедливий.
+    const bands = ODDS_BANDS.map(([lo, hi]) => {
+      const inBand = markets.filter(x => BAND_GROUPS.has(x.group) && !TIP_EXCLUDE.has(x.key) && !x.key.startsWith('N'))
+        .map(x => ({ ...x, k: x.odds || 1 / x.p }))
+        .filter(x => x.k >= lo && x.k <= hi);
+      const value = inBand.filter(x => x.edge != null && x.edge >= VALUE_EDGE).sort((a, b) => b.edge - a.edge)[0];
+      const pick = value || inBand.sort((a, b) => b.p - a.p)[0] || null;
+      return { lo, hi, pick, isValue: !!value };
+    });
+
     return {
       lh, la, model: { lh: mlh, la: mla, ...modelCore }, market, useXg,
-      prob, markets, groups, scores: scores.slice(0, 9), tip, alternatives,
+      prob, markets, groups, bands, scores: scores.slice(0, 9), tip, alternatives,
       value: valueBets[0] || null,
       corners: cc && cc.corners, cards: cc && cc.cards,
       lowData: minPlayed < 4, home: H, away: A,
@@ -539,11 +555,44 @@ FP.model = (() => {
     return { edge, kelly };
   }
 
-  // Розрахунок ставки за фінальним рахунком: true / false / null (повернення або ринок не за рахунком).
-  function settle(key, h, a) {
+  // Розрахунок ставки за фінальним рахунком: true / false / null (повернення).
+  // Ринки таймів розраховуються за рахунком першого тайму (ht), кутові й картки — за статистикою матчу (box).
+  // undefined — розрахувати неможливо (немає потрібних даних).
+  function settle(key, h, a, extra) {
     const mk = MARKET_BY_KEY.get(key);
-    return mk ? mk.hit(h, a) : undefined;
+    if (mk) return mk.hit(h, a);
+    const ht = extra && extra.ht, box = extra && extra.box;
+    if (ht && /^HT|^H2|^BOTHH|^MORE/.test(key)) {
+      const h1 = ht.home, a1 = ht.away, h2 = h - h1, a2 = a - a1, g1 = h1 + a1, g2 = h2 + a2;
+      const r = (x, y) => (x > y ? '1' : x === y ? 'X' : '2');
+      switch (key) {
+        case 'HT1': return h1 > a1;
+        case 'HTX': return h1 === a1;
+        case 'HT2': return a1 > h1;
+        case 'HTO05': return g1 >= 1;
+        case 'HTO15': return g1 >= 2;
+        case 'HTU15': return g1 <= 1;
+        case 'H2O05': return g2 >= 1;
+        case 'H2O15': return g2 >= 2;
+        case 'BOTHH': return g1 >= 1 && g2 >= 1;
+        case 'MORE1': return g1 > g2;
+        case 'MORE2': return g2 > g1;
+        default:
+          if (key.startsWith('HTFT')) return key.slice(4) === `${r(h1, a1)}/${r(h, a)}`;
+      }
+    }
+    if (box) {
+      const corners = box.homeCorners + box.awayCorners, cards = box.homeYellow + box.awayYellow;
+      let m;
+      if ((m = /^CO([\d.]+)$/.exec(key))) return corners > +m[1];
+      if ((m = /^CU([\d.]+)$/.exec(key))) return corners < +m[1];
+      if (key === 'CH') return box.homeCorners > box.awayCorners;
+      if (key === 'CA') return box.awayCorners > box.homeCorners;
+      if ((m = /^YO([\d.]+)$/.exec(key))) return cards > +m[1];
+      if ((m = /^YU([\d.]+)$/.exec(key))) return cards < +m[1];
+    }
+    return undefined;
   }
 
-  return { build, predict, value, settle, isResult, GROUPS: G };
+  return { build, predict, value, settle, isResult, GROUPS: G, ODDS_BANDS };
 })();

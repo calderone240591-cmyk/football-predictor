@@ -245,6 +245,28 @@ FP.api = (() => {
     return cached(k, 0, `${SITE}${slug}/summary?event=${eventId}`, slimSummary, true);
   }
 
+  // Факти зіграного матчу для розрахунку ставок: рахунок першого тайму, кутові, жовті картки.
+  // Матч уже не зміниться, тож кешуємо надовго.
+  function matchFacts(slug, eventId) {
+    return cached(`mf:${eventId}`, 60 * 24 * 60 * MIN, `${SITE}${slug}/summary?event=${eventId}`, d => {
+      const comp = d.header && d.header.competitions && d.header.competitions[0];
+      const side = ha => (comp ? comp.competitors.find(c => c.homeAway === ha) : null);
+      const h = side('home'), a = side('away');
+      const first = c => (c && c.linescores && c.linescores[0] ? Number(c.linescores[0].displayValue) : null);
+      const stat = (teamId, name) => {
+        const t = ((d.boxscore && d.boxscore.teams) || []).find(x => String(x.team.id) === String(teamId));
+        const s = t && (t.statistics || []).find(x => x.name === name);
+        return s ? Number(s.displayValue) : null;
+      };
+      const ht = first(h) != null && first(a) != null ? { home: first(h), away: first(a) } : null;
+      const hc = h && stat(h.id, 'wonCorners'), ac = a && stat(a.id, 'wonCorners');
+      const hy = h && stat(h.id, 'yellowCards'), ay = a && stat(a.id, 'yellowCards');
+      const box = [hc, ac, hy, ay].every(v => v != null && !isNaN(v))
+        ? { homeCorners: hc, awayCorners: ac, homeYellow: hy, awayYellow: ay } : null;
+      return { ht, box };
+    });
+  }
+
   // Сезонна статистика команди: xG, кутові, картки, удари. Для ліг без xG ESPN віддає нулі —
   // тоді xG вважаємо недоступним.
   const CORE = 'https://sports.core.api.espn.com/v2/sports/soccer/leagues/';
@@ -288,5 +310,5 @@ FP.api = (() => {
     return out;
   }
 
-  return { month, monthsAround, season, standings, lineups, teamSeasonStats, clearCache, pool };
+  return { month, monthsAround, season, standings, lineups, teamSeasonStats, matchFacts, clearCache, pool };
 })();

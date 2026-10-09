@@ -1,5 +1,5 @@
 // Офлайн-оболонка додатка. Дані API не кешуються тут — ними керує js/api.js.
-const VERSION = 'fp-v9';
+const VERSION = 'fp-v10';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'js/config.js', 'js/api.js', 'js/model.js', 'js/history.js', 'js/glossary.js', 'js/slip.js', 'js/app.js',
