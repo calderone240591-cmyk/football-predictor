@@ -413,6 +413,10 @@ a.acca-row { color: inherit; text-decoration: none; }
 .band-row .badge { margin-left: 0; }
 .empty-band em { color: var(--muted); font-size: 12px; }
 
+.notice-card { border-left: 4px solid var(--draw); }
+.notice-card p { margin: 6px 0 0; }
+.tip-main i { font-style: normal; font-size: 15px; margin-left: 6px; }
+
 /* ---------- лайв ---------- */
 .tabbar a { font-size: 10px; }
 .segmented.small button { font-size: 12px; padding: 6px 2px; }

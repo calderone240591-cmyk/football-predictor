@@ -526,6 +526,8 @@
     const l = LEAGUE_BY_SLUG.get(slug);
     const p = pred.prob;
     const showScore = ev.state !== 'pre';
+    // Матч почався (або перенесений/скасований) — рекомендації вже не показуємо.
+    const started = !isUpcoming(ev) || ev.ts * 1000 <= Date.now();
     const withOdds = pred.markets.filter(x => x.odds).sort((a, b) => b.edge - a.edge);
 
     $view.innerHTML = `
@@ -536,7 +538,7 @@
           <div class="hero-score">${showScore ? `${ev.home.score ?? 0} : ${ev.away.score ?? 0}` : esc(timeOf(ev.ts))}<small>${esc(ev.state === 'pre' && isUpcoming(ev) ? dateOf(ev.ts) : statusText(ev))}</small></div>
           <div><img src="${esc(ev.away.logo)}" alt=""><b>${esc(ev.away.name)}</b></div>
         </div>
-        <div class="xg">Очікувані голи: <b>${pred.lh.toFixed(2)}</b> : <b>${pred.la.toFixed(2)}</b> ${help('expgoals')}</div>
+        <div class="xg">Очікувані голи${started ? ' (до матчу)' : ''}: <b>${pred.lh.toFixed(2)}</b> : <b>${pred.la.toFixed(2)}</b> ${help('expgoals')}</div>
         <div class="bar big">
           <span class="b1" style="flex:${p['1']}">${pct(p['1'])}</span>
           <span class="bx" style="flex:${p.X}">${pct(p.X)}</span>
@@ -545,6 +547,7 @@
         <div class="bar-legend"><span>П1 · кф ${fair(p['1'])}</span><span>Х · ${fair(p.X)}</span><span>П2 · ${fair(p['2'])}</span></div>
       </section>
 
+      ${started ? startedCard(ev, pred) : `
       <section class="card tipcard ${confClass(pred.tip.conf)}">
         <div class="tip-label">Рекомендована ставка ${help('tip')}</div>
         <div class="tip-main">${esc(pred.tip.long)}</div>
@@ -558,9 +561,9 @@
         ${pred.value ? `<div class="value-pick">Цінна ставка ${help('value')}: <b>${esc(pred.value.long)}</b> за кф ${pred.value.odds.toFixed(2)}, перевага +${(pred.value.edge * 100).toFixed(1)}%</div>` : ''}
         ${isUpcoming(ev) ? `<div class="btn-row">${addBtn(ev, pred.tip.key, 'в експрес')}</div>` : ''}
         <a class="gloss-link" href="#/info/markets">Що означають ТБ, ІТ, Ф1 та інші позначення →</a>
-      </section>
+      </section>`}
 
-      ${withOdds.length ? `
+      ${!started && withOdds.length ? `
       <section class="card">
         <h3>Порівняння з букмекером${ev.odds && ev.odds.provider ? ` (${esc(ev.odds.provider)})` : ''}</h3>
         <table class="markets">
@@ -583,6 +586,7 @@
 
       ${squads(ev, lineups)}
 
+      ${started ? '' : `
       <section class="card">
         <h3>Калькулятор для свого букмекера</h3>
         <p class="hint">Введіть коефіцієнт вашої букмекерської контори, і додаток покаже, чи вигідна ставка.</p>
@@ -598,11 +602,11 @@
         <div class="picks">${pred.groups.filter(g => g.pick).map(g => `
           <div class="pick"><span>${esc(g.name)}</span><b>${esc(g.pick.short)}</b><i>${pct(g.pick.p)} · кф ${fair(g.pick.p)}</i>${addBtn(ev, g.pick.key)}</div>`).join('')}
         </div>
-        <p class="hint">Найімовірніший варіант у кожній групі з ймовірністю 55–85%. Кутові й картки — орієнтовна оцінка за сезонною статистикою команд.</p>
-      </section>
+        <p class="hint">Найімовірніший варіант у кожній групі з кф від 1.5 до 3 (ймовірність 33–67%). Кутові й картки — оцінка за сезонною статистикою команд.</p>
+      </section>`}
 
       <section class="card">
-        <h3>Усі ринки</h3>
+        <h3>${started ? 'Ймовірності до матчу' : 'Усі ринки'}</h3>
         ${pred.groups.map((g, i) => `
           <details class="mgroup" ${i === 0 ? 'open' : ''}>
             <summary>${esc(g.name)}<span>${g.list.length}</span></summary>
@@ -629,6 +633,7 @@
       </section>`;
 
     const $m = document.getElementById('v-market'), $o = document.getElementById('v-odds'), $out = document.getElementById('v-out');
+    if (!$m) return;   // матч уже почався — калькулятора немає
     const saved = state.valueInput.get(ev.id);
     if (saved) { $m.value = saved.market; $o.value = saved.odds; }
     const recalc = () => {
@@ -643,6 +648,26 @@
     $m.addEventListener('change', recalc);
     $o.addEventListener('input', recalc);
     recalc();
+  }
+
+  // Матч почався: передматчеві рекомендації вже неактуальні (вони записані в статистику до старту).
+  // Після матчу показуємо, чи зіграла рекомендація.
+  function startedCard(ev, pred) {
+    if (isFinished(ev)) {
+      const r = model.settle(pred.tip.key, ev.home.score, ev.away.score);
+      return `
+        <section class="card tipcard ${r ? 'hi' : 'lo'}">
+          <div class="tip-label">Рекомендація до матчу</div>
+          <div class="tip-main">${esc(pred.tip.long)} ${r === true ? '<i class="ok">✓ зіграла</i>' : r === false ? '<i class="bad">✗ не зіграла</i>' : '↺'}</div>
+          <p class="hint">Ймовірність до матчу ${pct(pred.tip.p)}. Результат враховано у вкладці «Статистика».</p>
+        </section>`;
+    }
+    return `
+      <section class="card notice-card">
+        <div class="tip-label">Матч іде</div>
+        <p>Передматчеві рекомендації вже неактуальні: вони були зафіксовані до початку матчу і враховуються у статистиці.</p>
+        <p class="hint">Аналіз для ставок під час гри — у розділі <a href="#/live">«Лайв»</a>: у перерві і до ${LIVE_UNTIL_MINUTE}-ї хвилини.</p>
+      </section>`;
   }
 
   function squads(ev, lineups) {
@@ -1093,7 +1118,28 @@
 
   // ---------- Лайв: матчі в перерві ----------
   const isHalftime = ev => ev.state === 'in' && /HALFTIME/.test(ev.status);
+  const isFirstHalf = ev => ev.state === 'in' && /FIRST_HALF/.test(ev.status);
+  const minuteOf = ev => { const m = /(\d+)/.exec(ev.clock || ''); return m ? +m[1] : null; };
+  // Після перерви матч показується з рекомендаціями перерви до 50-ї хвилини включно,
+  // поки рахунок не змінився; з 51-ї хвилини рекомендації вже неактуальні — матч зникає.
+  const LIVE_UNTIL_MINUTE = 50;
+  const inGrace = ev => ev.state === 'in' && /SECOND_HALF/.test(ev.status) && (minuteOf(ev) ?? 99) <= LIVE_UNTIL_MINUTE;
   state.liveK2 = true;   // показувати лише ринки з кф від 2.00
+
+  // Знімки аналізу, зробленого в перерві: id матчу → { slug, ls, h, a, an, at }.
+  // Зберігаються в IndexedDB, щоб пережити перезапуск додатка між перервою і 50-ю хвилиною.
+  let liveSnaps = null;
+  async function loadSnaps() {
+    if (liveSnaps) return liveSnaps;
+    await FP.store.ready;
+    liveSnaps = FP.store.get('state', 'liveSnaps') || {};
+    return liveSnaps;
+  }
+  function saveSnaps() {
+    const cutoff = Date.now() - 3 * 3600e3;
+    for (const id of Object.keys(liveSnaps)) if (liveSnaps[id].at < cutoff) delete liveSnaps[id];
+    FP.store.put('state', 'liveSnaps', liveSnaps);
+  }
 
   async function viewLive(silent = false) {
     const rid = silent ? renderId : ++renderId;
@@ -1108,7 +1154,10 @@
     const all = boards.flat();
     all.forEach(x => state.events.set(evKey(x.slug, x.ev.id), x));
     const halftime = all.filter(x => isHalftime(x.ev));
-    const playing = all.filter(x => isLive(x.ev) && !isHalftime(x.ev)).sort((a, b) => a.ev.ts - b.ev.ts);
+    // «Зараз ідуть» — лише 1-й тайм: ці матчі скоро дійдуть до перерви.
+    const playing = all.filter(x => isFirstHalf(x.ev)).sort((a, b) => a.ev.ts - b.ev.ts);
+    const snaps = await loadSnaps();
+    if (rid !== renderId) return;
     const soon = all.filter(x => isUpcoming(x.ev) && x.ev.ts * 1000 > Date.now() && x.ev.ts * 1000 - Date.now() < 8 * 3600e3)
       .sort((a, b) => a.ev.ts - b.ev.ts);
 
@@ -1132,8 +1181,16 @@
       const h = ls.home.score ?? x.ev.home.score ?? 0, a = ls.away.score ?? x.ev.away.score ?? 0;
       const an = model.liveAnalysis({ lh: pre.lh, la: pre.la }, { h, a, home: ls.home, away: ls.away }, ctx);
       FP.history.recordLive(x.slug, x.ev, { home: h, away: a }, an.recs);
+      snaps[x.ev.id] = { slug: x.slug, ls, h, a, an, at: Date.now() };
       analyses.push({ ...x, ls, h, a, an });
     }
+    // 2-й тайм до 50-ї хвилини: показуємо аналіз, зроблений у перерві, якщо рахунок не змінився.
+    for (const x of all.filter(y => inGrace(y.ev))) {
+      const s = snaps[x.ev.id];
+      if (!s || x.ev.home.score !== s.h || x.ev.away.score !== s.a) continue;
+      analyses.push({ ...s, ev: x.ev, slug: x.slug, grace: true });
+    }
+    if (halftime.length) saveSnaps();
     state.liveData = { analyses, playing, soon, at: Date.now() };
     renderLive();
   }
@@ -1142,7 +1199,7 @@
     const { analyses, playing, soon, at } = state.liveData;
     const k2 = m => !state.liveK2 || 1 / m.p >= 2;
     const statRow = (label, h, a, suffix = '') => `<tr><td>${h ?? '—'}${h != null ? suffix : ''}</td><th>${label}</th><td>${a ?? '—'}${a != null ? suffix : ''}</td></tr>`;
-    const card = ({ slug, ev, ls, h, a, an }) => `
+    const card = ({ slug, ev, ls, h, a, an, grace }) => `
       <section class="card live-card">
         <a class="band-head" href="#/match/${slug}/${ev.id}">
           <small><img src="${FP.leagueLogo(LEAGUE_BY_SLUG.get(slug))}" alt="">${esc(leagueLabel(slug))}</small>
@@ -1150,7 +1207,9 @@
         <div class="live-score">
           <span>${esc(ev.home.name)}</span><b>${h}:${a}</b><span>${esc(ev.away.name)}</span>
         </div>
-        <div class="live-status">Перерва</div>
+        <div class="live-status">${grace
+          ? `2-й тайм · ${esc(ev.clock || '')} · рекомендації з перерви, зникне після ${LIVE_UNTIL_MINUTE}'`
+          : 'Перерва'}</div>
         <table class="compare live-stats"><tbody>
           ${statRow('Удари', ls.home.shots, ls.away.shots)}
           ${statRow('У площину', ls.home.sot, ls.away.sot)}
@@ -1188,7 +1247,7 @@
           <h3>Зараз немає матчів у перерві</h3>
           <p class="hint">Розділ показує матчі лише під час перерви: тоді вже відома статистика 1-го тайму, а 2-й ще попереду. Сторінка оновлюється кожні 15 секунд — тримайте її відкритою, і матч з'явиться, щойно почнеться перерва.</p>
         </section>`}
-      ${playing.length ? `<h2 class="section-title">Зараз ідуть</h2>
+      ${playing.length ? `<h2 class="section-title">1-й тайм · скоро перерва</h2>
         <section class="card">${playing.map(({ slug, ev }) => `
           <a class="hrow" href="#/match/${slug}/${ev.id}">
             <div class="hrow-main"><small>${esc(leagueLabel(slug))}</small><span>${esc(ev.home.name)} — ${esc(ev.away.name)} <b>${ev.home.score ?? 0}:${ev.away.score ?? 0}</b></span></div>
@@ -1200,7 +1259,7 @@
             <div class="hrow-main"><small>${esc(leagueLabel(slug))}</small><span>${esc(ev.home.name)} — ${esc(ev.away.name)}</span></div>
             <div class="hrow-st"><small class="soon">${esc(timeOf(ev.ts))}<br>перерва ≈ ${esc(timeOf(ev.ts + 47 * 60))}</small></div>
           </a>`).join('')}</section>` : ''}
-      <p class="hint pad">Живих коефіцієнтів у безкоштовних даних немає, тож показано справедливий кф за нашою ймовірністю: «кф від 2.00» = ймовірність до 50%. У лайві букмекер зазвичай дає на 5–10% менше. Прогноз 2-го тайму поєднує передматчеву силу команд зі статистикою 1-го тайму, рахунком і вилученнями. ${help('fair')}</p>`;
+      <p class="hint pad">Матч показується в перерві і до ${LIVE_UNTIL_MINUTE}-ї хвилини (поки рахунок не змінився), далі рекомендації неактуальні і він зникає; рекомендації, видані в перерві, записуються в статистику. Живих коефіцієнтів у безкоштовних даних немає, тож показано справедливий кф за нашою ймовірністю: «кф від 2.00» = ймовірність до 50%. У лайві букмекер зазвичай дає на 5–10% менше. ${help('fair')}</p>`;
 
     const $k2 = document.getElementById('live-k2');
     if ($k2) $k2.onchange = () => { state.liveK2 = $k2.checked; renderLive(); };
