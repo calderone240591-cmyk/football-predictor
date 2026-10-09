@@ -63,14 +63,6 @@ FP.history = (() => {
     saveSingles();
   }
 
-  // Відтворений прогноз для вже зіграного матчу, якого немає в журналі (рахується за даними до матчу).
-  function recordReconstructed(slug, ev, pred) {
-    if (data[ev.id]) return;
-    data[ev.id] = { ...entryOf(slug, ev, pred), rec: true };
-    saveSingles();
-  }
-
-  const has = id => !!data[id];
 
   // ---------- лайв-рекомендації (у перерві) ----------
   const LIVE_KEY = 'fp_live';
@@ -115,5 +107,13 @@ FP.history = (() => {
     try { localStorage.removeItem(KEY); localStorage.removeItem(ACCA_KEY); localStorage.removeItem(LIVE_KEY); } catch {}
   }
 
-  return { record, recordReconstructed, recordLive, allLive, has, all, activeAccas, archivedAccas, setActive, retire, clear };
+  // Нова версія параметрів рекомендацій — статистика ведеться з нуля (одноразове скидання).
+  try {
+    if (localStorage.getItem('fp_stats_version') !== FP.STATS_VERSION) {
+      clear();
+      localStorage.setItem('fp_stats_version', FP.STATS_VERSION);
+    }
+  } catch {}
+
+  return { record, recordLive, allLive, all, activeAccas, archivedAccas, setActive, retire, clear };
 })();

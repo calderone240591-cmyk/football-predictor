@@ -246,13 +246,14 @@ FP.api = (() => {
   }
 
   // ---------- лайв ----------
-  // Поточний ігровий день турніру (тут є матчі, що йдуть зараз), оновлення раз на 40 с.
+  // Поточний ігровий день турніру (тут є матчі, що йдуть зараз), оновлення раз на 15 с.
+  const LIVE_TTL = 15 * 1000;
   const liveBoard = slug =>
-    cached(`lb:${slug}`, 40 * 1000, `${SITE}${slug}/scoreboard`, d => ({ events: (d.events || []).map(slimEvent) }));
+    cached(`lb:${slug}`, LIVE_TTL, `${SITE}${slug}/scoreboard`, d => ({ events: (d.events || []).map(slimEvent) }));
 
   // Жива статистика матчу: рахунок, статус і показники обох команд.
   function liveStats(slug, eventId) {
-    return cached(`ls:${eventId}`, 40 * 1000, `${SITE}${slug}/summary?event=${eventId}`, d => {
+    return cached(`ls:${eventId}`, LIVE_TTL, `${SITE}${slug}/summary?event=${eventId}`, d => {
       const comp = d.header && d.header.competitions && d.header.competitions[0];
       const side = ha => (comp ? comp.competitors.find(c => c.homeAway === ha) : null);
       const team = c => {

@@ -778,32 +778,44 @@
   // Ймовірність окремої події підбирається так, щоб за n подій вийти на цільовий кф.
   // Експрес у слоті не змінюється, доки не завершиться його перша подія; тоді він іде
   // в статистику, а в слоті з'являється новий.
+  // Два набори по 6 експресів:
+  //  • «Надійні» — кожна подія з ймовірністю від 67% (ідеал ~70%), коефіцієнт — який вийде;
+  //  • «Під коефіцієнт» — задані діапазони кф, ймовірність подій нижча (інакше кф недосяжний).
+  // minP — мінімальна ймовірність події.
   const ACCA_SLOTS = [
-    { slot: 'L1', cat: 'levels',  name: 'Надійний',      risk: 1, n: 3, target: 2,   lo: 1.8, hi: 2.5 },
-    { slot: 'L2', cat: 'levels',  name: 'Помірний',      risk: 2, n: 4, target: 3.5, lo: 3,   hi: 4.5 },
-    { slot: 'L3', cat: 'levels',  name: 'Збалансований', risk: 3, n: 5, target: 6,   lo: 5,   hi: 8 },
-    { slot: 'L4', cat: 'levels',  name: 'Ризикований',   risk: 4, n: 5, target: 10,  lo: 8.5, hi: 13 },
-    { slot: 'L5', cat: 'levels',  name: 'Високий ризик', risk: 5, n: 6, target: 22,  lo: 20,  hi: 35 },
-    { slot: 'D1', cat: 'doubles', name: 'Дубль · кф ~3.5', n: 2, target: 3.5, lo: 3,  hi: 4.2 },
-    { slot: 'D2', cat: 'doubles', name: 'Дубль · кф ~5',   n: 2, target: 5,   lo: 4.2, hi: 6 },
-    { slot: 'D3', cat: 'doubles', name: 'Дубль · кф ~7',   n: 2, target: 7,   lo: 6,  hi: 8 },
-    { slot: 'T1', cat: 'triples', name: 'Трійник · кф ~10', n: 3, target: 10, lo: 8,  hi: 12 },
-    { slot: 'T2', cat: 'triples', name: 'Трійник · кф ~15', n: 3, target: 15, lo: 12, hi: 18 },
-    { slot: 'T3', cat: 'triples', name: 'Трійник · кф ~22', n: 3, target: 22, lo: 18, hi: 25 },
+    { slot: 'S2a', set: 'safe', cat: 'safe2', name: 'Надійний · 2 події №1', n: 2, target: 2.0, lo: 1.7, hi: 2.25, minP: 0.67 },
+    { slot: 'S2b', set: 'safe', cat: 'safe2', name: 'Надійний · 2 події №2', n: 2, target: 2.0, lo: 1.7, hi: 2.25, minP: 0.67 },
+    { slot: 'S3a', set: 'safe', cat: 'safe3', name: 'Надійний · 3 події №1', n: 3, target: 2.9, lo: 2.4, hi: 3.35, minP: 0.67 },
+    { slot: 'S3b', set: 'safe', cat: 'safe3', name: 'Надійний · 3 події №2', n: 3, target: 2.9, lo: 2.4, hi: 3.35, minP: 0.67 },
+    { slot: 'S4a', set: 'safe', cat: 'safe4', name: 'Надійний · 4 події №1', n: 4, target: 4.0, lo: 3.2, hi: 4.97, minP: 0.67 },
+    { slot: 'S4b', set: 'safe', cat: 'safe4', name: 'Надійний · 4 події №2', n: 4, target: 4.0, lo: 3.2, hi: 4.97, minP: 0.67 },
+    { slot: 'O2a', set: 'odds', cat: 'odds2', name: '2 події · кф ~3.5', n: 2, target: 3.5, lo: 3,  hi: 4.2 },
+    { slot: 'O2b', set: 'odds', cat: 'odds2', name: '2 події · кф ~4.5', n: 2, target: 4.5, lo: 4.2, hi: 5 },
+    { slot: 'O3a', set: 'odds', cat: 'odds3', name: '3 події · кф ~12', n: 3, target: 12, lo: 10, hi: 15 },
+    { slot: 'O3b', set: 'odds', cat: 'odds3', name: '3 події · кф ~17', n: 3, target: 17, lo: 15, hi: 20 },
+    { slot: 'O4a', set: 'odds', cat: 'odds4', name: '4 події · кф ~14', n: 4, target: 14, lo: 12, hi: 18 },
+    { slot: 'O4b', set: 'odds', cat: 'odds4', name: '4 події · кф ~21', n: 4, target: 21, lo: 18, hi: 24 },
   ];
-  const ACCA_CATS = { levels: 'Рівні ризику', doubles: 'З 2 подій · кф 3–8', triples: 'З 3 подій · кф 8–25' };
-  // Ринки для експресів: лише основні, без таймів, кутових і карток (там модель орієнтовна).
+  const ACCA_SETS = {
+    safe: 'Надійні · кожна подія від 67%',
+    odds: 'Під коефіцієнт · 3–5, 10–20, 12–24',
+  };
+  const ACCA_CATS = {
+    safe2: 'Надійні · 2 події', safe3: 'Надійні · 3 події', safe4: 'Надійні · 4 події',
+    odds2: '2 події · кф 3–5', odds3: '3 події · кф 10–20', odds4: '4 події · кф 12–24',
+  };
+  // Ринки для експресів: основні, без таймів, кутових і карток (вони розраховуються лише після матчу
+  // за його статистикою, а експрес має замінюватись одразу після першої події).
   const ACCA_GROUPS = new Set(['Результат', 'Тотал голів', 'Обидві заб\'ють', 'Фори', 'Індивідуальні тотали', 'Комбіновані']);
-  const ACCA_EXCLUDE = new Set(['12', 'DNB1', 'DNB2', 'O05', 'HO05', 'AO05']);
 
   const legOdds = l => (l.userOdds > 1 ? l.userOdds : l.odds > 1 ? l.odds : null);
 
-  const isAccaMarket = m => ACCA_GROUPS.has(m.group) && !ACCA_EXCLUDE.has(m.key);
+  const isAccaMarket = m => ACCA_GROUPS.has(m.group);
 
   // used.events — події (матч + ринок), уже зайняті в інших експресах: повторювати їх не можна.
   // used.matches — матчі, що вже трапляються: можна, але з невеликим штрафом заради різноманітності.
   const eventKey = (id, key) => `${id}:${key}`;
-  const usable = (m, ev, used) => isAccaMarket(m) && m.p >= 0.3 && m.p <= 0.9 && !used.events.has(eventKey(ev.id, m.key));
+  const usable = (m, ev, used, cfg) => isAccaMarket(m) && m.p >= (cfg.minP || 0.3) && m.p <= 0.9 && !used.events.has(eventKey(ev.id, m.key));
   const penalty = (pred, ev, used) => (pred.lowData ? 0.5 : 0) + (used.matches.has(ev.id) ? 0.3 : 0);
 
   const toLeg = ({ slug, ev, m }) => ({
@@ -831,8 +843,10 @@
       for (const { slug, ev, pred } of pool) {
         if (chosen.some(c => c.ev.id === ev.id)) continue;
         for (const m of pred.markets) {
-          if (!usable(m, ev, used)) continue;
-          const score = -Math.abs(m.p - ideal) + Math.max(0, m.edge || 0) - penalty(pred, ev, used);
+          if (!usable(m, ev, used, cfg)) continue;
+          // Для надійних — невеликий бонус подіям від 70%.
+          const score = -Math.abs(m.p - ideal) + Math.max(0, m.edge || 0) - penalty(pred, ev, used)
+            + (cfg.minP && m.p >= 0.7 ? 0.02 : 0);
           if (!best || score > best.score) best = { slug, ev, m, score };
         }
       }
@@ -844,7 +858,7 @@
     for (const { slug, ev, pred } of pool) {
       if (chosen.some(c => c.ev.id === ev.id)) continue;
       for (const m of pred.markets) {
-        if (!usable(m, ev, used)) continue;
+        if (!usable(m, ev, used, cfg)) continue;
         const total = odds / m.p;
         if (total < lo || total > hi) continue;
         const score = -2 * Math.abs(Math.log(total / target)) + Math.max(0, m.edge || 0) - penalty(pred, ev, used);
@@ -856,8 +870,8 @@
     const legs = chosen.sort((a, b) => a.ev.ts - b.ev.ts).map(toLeg);
     const p = legs.reduce((s, l) => s * l.p, 1);
     return {
-      id: `${cfg.slot}-${Date.now()}`, slot: cfg.slot, cat: cfg.cat, title: cfg.name,
-      risk: cfg.risk || riskOf(p), createdAt: Date.now(), p, fair: 1 / p, legs,
+      id: `${cfg.slot}-${Date.now()}`, slot: cfg.slot, set: cfg.set, cat: cfg.cat, title: cfg.name,
+      risk: riskOf(p), createdAt: Date.now(), p, fair: 1 / p, legs,
     };
   }
 
@@ -1033,12 +1047,14 @@
     };
 
     let html = '';
-    for (const [cat, title] of Object.entries(ACCA_CATS)) {
+    for (const [set, title] of Object.entries(ACCA_SETS)) {
       html += `<h2 class="section-title">${esc(title)}</h2>`;
-      ACCA_SLOTS.forEach((cfg, i) => { if (cfg.cat === cat) html += card(cfg, i); });
+      if (set === 'safe') html += '<p class="hint pad">Кожна подія — з ймовірністю від 67% (переважно 70%+). Через це коефіцієнт невисокий: дубль ≈ 2, трійник ≈ 3, четвірка ≈ 4–5 — зате експрес заходить частіше.</p>';
+      else html += '<p class="hint pad">Коефіцієнти 3–5, 10–20 і 12–24 досяжні лише з подіями нижчої ймовірності (≈ 40–58%), тож такі експреси заходять рідше.</p>';
+      ACCA_SLOTS.forEach((cfg, i) => { if (cfg.set === set) html += card(cfg, i); });
     }
     document.getElementById('accas').innerHTML = html + `
-      <p class="hint pad">Події (матч + ставка) в 11 експресах не повторюються; один матч може траплятися з різними ставками. Коефіцієнт — справедливий (без маржі): букмекер на кожну подію дає на 5–8% менше. Ймовірність показує, як часто такий експрес заходить: 5% — приблизно раз на 20 спроб. Результати всіх експресів — у вкладці «Історія».</p>`;
+      <p class="hint pad">Події (матч + ставка) в 12 експресах не повторюються; один матч може траплятися з різними ставками. Коефіцієнт — справедливий (без маржі): букмекер на кожну подію дає на 5–8% менше. Ймовірність показує, як часто такий експрес заходить: 25% — приблизно раз на 4 спроби. Результати всіх експресів — у вкладці «Статистика».</p>`;
   }
 
   // Події купону: видалення, введення кф, очищення, завантаження готового експресу.
@@ -1162,13 +1178,13 @@
 
     $view.innerHTML = `
       <div class="live-top">
-        <span>Оновлено о ${timeOf(at / 1000)} · щохвилини</span>
+        <span><i class="live-dot"></i>Оновлено о ${new Date(at).toLocaleTimeString('uk-UA')} · кожні 15 с</span>
         <label class="switch"><input type="checkbox" id="live-k2" ${state.liveK2 ? 'checked' : ''}> лише кф ≥ 2.00</label>
       </div>
       ${analyses.length ? analyses.map(card).join('') : `
         <section class="card">
           <h3>Зараз немає матчів у перерві</h3>
-          <p class="hint">Розділ показує матчі лише під час перерви: тоді вже відома статистика 1-го тайму, а 2-й ще попереду. Сторінка оновлюється щохвилини — відкрийте її під час перерви.</p>
+          <p class="hint">Розділ показує матчі лише під час перерви: тоді вже відома статистика 1-го тайму, а 2-й ще попереду. Сторінка оновлюється кожні 15 секунд — тримайте її відкритою, і матч з'явиться, щойно почнеться перерва.</p>
         </section>`}
       ${playing.length ? `<h2 class="section-title">Зараз ідуть</h2>
         <section class="card">${playing.map(({ slug, ev }) => `
@@ -1198,10 +1214,6 @@
     const rid = ++renderId;
     setHeader('Статистика');
     $view.innerHTML = '<div class="loading">Перевірка результатів…</div>';
-
-    // Відтворюємо прогнози для зіграних з дня запуску матчів, яких немає в журналі.
-    await backfill(rid);
-    if (rid !== renderId) return;
 
     const singles = FP.history.all();
     const accas = [...FP.history.archivedAccas(), ...Object.values(FP.history.activeAccas())];
@@ -1302,38 +1314,6 @@
       ${days ? `<section class="card"><h3>По днях</h3>${days}</section>` : '<div class="empty">За цей період лайв-рекомендацій ще немає.</div>'}`;
   }
 
-  // Відтворення прогнозів з дня запуску (FP.APP_START) для зіграних матчів чемпіонатів, яких немає
-  // в журналі. Модель будується лише з матчів до дня гри, без коефіцієнтів букмекера і без
-  // статистики команд (вона вже містить цей матч), тож кутових і карток у відтворених записах немає.
-  async function backfill(rid) {
-    const start = Date.parse(`${FP.APP_START}T00:00:00`) / 1000;
-    const now = Date.now() / 1000;
-    if (now - start < 3600) return;
-    await api.pool(LEAGUES.filter(l => !l.cup), 3, async league => {
-      let season;
-      try { season = await api.season(league.slug, false, true); } catch { return; }
-      if (rid !== renderId) return;
-      const todo = season.events.filter(ev => ev.ts >= start && isFinished(ev) && !FP.history.has(ev.id));
-      if (!todo.length) return;
-      // Одна модель на день: станом на початок дня гри.
-      const byDay = new Map();
-      for (const ev of todo) {
-        const d = new Date(ev.ts * 1000);
-        const asOf = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 1000;
-        if (!byDay.has(asOf)) byDay.set(asOf, []);
-        byDay.get(asOf).push(ev);
-      }
-      for (const [asOf, list] of byDay) {
-        const before = season.events.filter(e => e.ts < asOf);
-        if (!before.some(model.isResult) && !season.previous.length) continue;
-        const m = model.build(league, before, null, season.previous, asOf);
-        for (const ev of list) {
-          const pred = model.predict(m, { ...ev, state: 'pre', odds: null }, null);
-          if (pred) FP.history.recordReconstructed(league.slug, ev, pred);
-        }
-      }
-    });
-  }
 
   const DONE = s => s === 'win' || s === 'loss';
   const units = v => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`;
@@ -1382,20 +1362,14 @@
       </div>`;
     const foot = `
       <div class="btn-row pad">
-        <button class="btn" data-export="${tab}">Завантажити таблицю (CSV)</button>
+        <button class="btn" data-pdf="1">Звіт PDF</button>
+        <button class="btn ghost" data-export="${tab}">Таблиця CSV</button>
         <button class="btn ghost" data-hclear="1">Очистити статистику</button>
       </div>
       <p class="hint pad">CSV відкривається в Excel, Google Таблицях чи Numbers. Об'єктивні висновки можна робити після кількох сотень ставок: на десятках результат сильно залежить від везіння.</p>`;
     const body = { singles: singlesHtml, picks: picksHtml, bands: bandsHtml, live: liveHistHtml, accas: accasHtml }[tab]();
     $view.innerHTML = head + body + foot;
   }
-
-  // Позначка відтвореного запису (прогноз відновлено за даними до матчу).
-  const recTag = e => (e.rec ? '<span class="rec-tag" title="Відтворено за даними до матчу">відн.</span>' : '');
-  const recNote = list => {
-    const n = list.filter(e => e.rec).length;
-    return n ? `<p class="hint">З них відтворено ${n}: для матчів з ${FP.APP_START.split('-').reverse().join('.')}, яких немає в журналі, прогноз пораховано за даними до матчу, без коефіцієнтів букмекера.</p>` : '';
-  };
 
   // Записи з розрахованими варіантами: { ...entry, items: [{ ...pick, st }] }.
   function withStatuses(field) {
@@ -1421,7 +1395,7 @@
         ${list.map(r => `
           <a class="hrow" href="#/match/${r.slug}/${r.id}">
             <div class="hrow-main">
-              <small>${esc(leagueLabel(r.slug))} ${recTag(r)}</small>
+              <small>${esc(leagueLabel(r.slug))}</small>
               <span>${esc(r.home)} — ${esc(r.away)} ${r.items[0].st.score ? `<b>${esc(r.items[0].st.score)}</b>` : ''}</span>
               <div class="pchips">${r.items.map(x => `<span class="pchip ${x.st.s}">${esc(chipLabel(x))} ${STATUS_ICON[x.st.s] || ''}</span>`).join('')}</div>
             </div>
@@ -1431,7 +1405,7 @@
 
   function picksHtml() {
     const rows = withStatuses('picks');
-    const all = rows.flatMap(r => r.items.map(x => ({ ...x, rec: r.rec })));
+    const all = rows.flatMap(r => r.items);
     const done = all.filter(x => DONE(x.st.s));
     const wins = done.filter(x => x.st.s === 'win').length;
     const exp = done.length ? done.reduce((s, x) => s + x.p, 0) / done.length : null;
@@ -1449,7 +1423,6 @@
           <div><b>${exp != null ? Math.round(exp * 100) + '%' : '—'}</b><span>очікувалось<br>за прогнозом</span></div>
           <div><b>${rows.length}</b><span>матчів<br>у статистиці</span></div>
         </div>
-        ${recNote(rows)}
         ${nodata ? `<p class="hint">Ще не розраховано ${nodata} варіантів на тайми, кутові чи картки: статистика цих матчів поки недоступна.</p>` : ''}
       </section>
       ${done.length ? `<section class="card">
@@ -1484,7 +1457,6 @@
           <div><b class="${total >= 0 ? 'ok' : 'bad'}">${done.length ? units(total) : '—'}</b><span>прибуток, од.<br>по 1 од. на кожну</span></div>
           <div><b class="${vProfit >= 0 ? 'ok' : 'bad'}">${values.length ? units(vProfit) : '—'}</b><span>з них цінні<br>${values.length} ст.</span></div>
         </div>
-        ${recNote(rows)}
         <p class="hint">Прибуток рахується за кф DraftKings, якщо він був, інакше за справедливим кф; у вашого букмекера кф зазвичай на 5–8% нижчий.</p>
       </section>
       ${done.length ? `<section class="card"><h3>За діапазонами</h3>${bandRows}</section>` : ''}
@@ -1531,7 +1503,7 @@
         ${list.map(r => `
           <a class="hrow" href="#/match/${r.slug}/${r.id}">
             <div class="hrow-main">
-              <small>${esc(leagueLabel(r.slug))} ${recTag(r)}</small>
+              <small>${esc(leagueLabel(r.slug))}</small>
               <span>${esc(r.home)} — ${esc(r.away)} ${r.tipSt.score ? `<b>${esc(r.tipSt.score)}</b>` : ''}</span>
               <em>${esc(r.tip.short)} · ${pct(r.tip.p)}${r.value ? ` &nbsp;|&nbsp; цінна: ${esc(r.value.short)} @ ${r.value.odds.toFixed(2)} ${r.valSt && r.valSt.s !== 'pending' ? STATUS_ICON[r.valSt.s] || '' : ''}` : ''}</em>
             </div>
@@ -1546,7 +1518,6 @@
           <div><b class="${valProfit >= 0 ? 'ok' : 'bad'}">${vals.length ? units(valProfit) : '—'}</b><span>цінні ставки, од.<br>${vals.length ? `${valWins} з ${vals.length} · ROI ${(valProfit / vals.length * 100).toFixed(0)}%` : 'ще немає'}</span></div>
           <div><b>${pending}</b><span>очікують<br>результату</span></div>
         </div>
-        ${recNote(rows)}
       </section>
       ${tips.length ? `<section class="card">
         <h3>Основні ставки</h3>
@@ -1616,6 +1587,140 @@
       ${cards ? `<section class="card"><h3>Усі експреси</h3>${cards}</section>` : '<div class="empty">За цей період експресів ще немає.</div>'}`;
   }
 
+  // ---------- Звіт у PDF ----------
+  // Звіт верстається як звичайна HTML-сторінка А4 і перетворюється на PDF бібліотекою html2pdf
+  // (вантажиться лише під час експорту). Кирилиця зберігається, бо сторінка рендериться як зображення.
+  const HTML2PDF = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+  let html2pdfLoading = null;
+  function loadHtml2pdf() {
+    if (window.html2pdf) return Promise.resolve();
+    html2pdfLoading = html2pdfLoading || new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = HTML2PDF;
+      s.onload = resolve;
+      s.onerror = () => { html2pdfLoading = null; reject(new Error('Не вдалося завантажити модуль PDF. Перевірте інтернет.')); };
+      document.head.appendChild(s);
+    });
+    return html2pdfLoading;
+  }
+
+  function reportHtml() {
+    const RES = { win: '✓', loss: '✗', void: '↺' };
+    const pc = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : '—');
+    const u = v => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`;
+    const agg = (list, k) => {
+      const done = list.filter(x => DONE(x.st.s));
+      const w = done.filter(x => x.st.s === 'win').length;
+      const exp = done.length ? done.reduce((s, x) => s + x.p, 0) / done.length : null;
+      const profit = k ? done.reduce((s, x) => s + (x.st.s === 'win' ? k(x) - 1 : -1), 0) : null;
+      return { n: done.length, w, exp, profit };
+    };
+    const row = (label, a) => `<tr><td>${esc(label)}</td><td>${a.n}</td><td>${a.w}</td><td><b>${pc(a.w, a.n)}</b></td>
+      <td>${a.exp != null ? Math.round(a.exp * 100) + '%' : '—'}</td><td class="${a.profit == null || !a.n ? '' : a.profit >= 0 ? 'pos' : 'neg'}">${a.profit == null || !a.n ? '—' : u(a.profit)}</td></tr>`;
+    const table = (head, body) => `<table><thead><tr>${head.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
+    const H = ['', 'Розраховано', 'Зіграло', '%', 'Очікувалось', 'Прибуток, од.'];
+
+    const singles = singlesData();
+    const tips = singles.map(r => ({ ...r.tip, st: r.tipSt }));
+    const values = singles.filter(r => r.value).map(r => ({ ...r.value, st: r.valSt }));
+    const picks = withStatuses('picks').flatMap(r => r.items);
+    const bands = withStatuses('bands').flatMap(r => r.items);
+    const lives = liveRows().flatMap(r => r.items);
+    const accas = accasData();
+    const accaItems = accas.map(a => ({ p: a.st.p, fair: a.st.fair, st: { s: a.st.s }, set: a.set, cat: a.cat }));
+    const fairK = x => 1 / x.p;
+
+    const summary = [
+      row('Основні ставки', agg(tips, x => x.odds || 1 / x.p)),
+      row('Цінні ставки (кф DraftKings)', agg(values, x => x.odds)),
+      row('Найкращі варіанти по ринках', agg(picks, fairK)),
+      row('Кф 1.64–9.99', agg(bands, x => x.k)),
+      row('Лайв (перерва)', agg(lives, x => x.k)),
+      row('Експреси · надійні', agg(accaItems.filter(a => a.set === 'safe'), x => x.fair)),
+      row('Експреси · під коефіцієнт', agg(accaItems.filter(a => a.set === 'odds'), x => x.fair)),
+    ].join('');
+
+    const byLevel = [3, 2, 1].map(l => row(`${['', 'Низька', 'Середня', 'Висока'][l]} впевненість`,
+      agg(tips.filter(t => t.level === l), x => x.odds || 1 / x.p))).join('');
+    const byGroup = Object.values(model.GROUPS).map(g => {
+      const a = agg(picks.filter(x => x.group === g), fairK);
+      return a.n ? row(g, a) : '';
+    }).join('');
+    const byBand = model.ODDS_BANDS.map(([lo, hi]) => row(`Кф ${lo}–${hi}`, agg(bands.filter(x => x.band === `${lo}–${hi}`), x => x.k))).join('');
+    const byCat = Object.entries(ACCA_CATS).map(([cat, t]) => row(t, agg(accaItems.filter(a => a.cat === cat), x => x.fair))).join('');
+
+    const journal = singles.filter(r => DONE(r.tipSt.s)).slice(0, 200).map(r => `
+      <tr><td>${esc(FP.dateOfTs(r.ts).split('-').reverse().join('.'))}</td><td>${esc(leagueLabel(r.slug))}</td>
+        <td>${esc(r.home)} — ${esc(r.away)}</td><td>${esc(r.tipSt.score || '')}</td>
+        <td>${esc(r.tip.short)}</td><td>${pct(r.tip.p)}</td><td class="${r.tipSt.s === 'win' ? 'pos' : 'neg'}">${RES[r.tipSt.s]}</td></tr>`).join('');
+
+    const accaList = accas.filter(a => DONE(a.st.s)).slice(0, 60).map(a => `
+      <div class="acca">
+        <div class="acca-h"><b>${esc(a.title)}</b><span>кф ${a.fair.toFixed(2)} · ${esc(new Date(a.createdAt).toLocaleDateString('uk-UA'))}</span>
+          <em class="${a.st.s === 'win' ? 'pos' : 'neg'}">${a.st.s === 'win' ? 'зайшов' : 'не зайшов'}</em></div>
+        ${a.legs.map((l, j) => `<div class="leg">${RES[a.st.legs[j].s] || '·'} ${esc(l.home)} — ${esc(l.away)}: <b>${esc(l.short)}</b> (${pct(l.p)})</div>`).join('')}
+      </div>`).join('');
+
+    const period = state.histPeriod ? `останні ${state.histPeriod} днів` : 'увесь час';
+    return `
+      <div class="pdf">
+        <style>
+          .pdf { width: 740px; padding: 8px 4px; font: 12px/1.45 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: #15201a; background: #fff; }
+          .pdf h1 { font-size: 22px; margin: 0; } .pdf h2 { font-size: 15px; margin: 18px 0 6px; color: #17834f; }
+          .pdf .meta { color: #5e6862; margin: 2px 0 10px; } .pdf .band { height: 4px; background: #17834f; border-radius: 2px; margin: 8px 0 12px; }
+          .pdf table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+          .pdf th { text-align: left; font-size: 11px; color: #5e6862; border-bottom: 1.5px solid #c9d1cb; padding: 5px 6px; }
+          .pdf td { border-bottom: 1px solid #e3e8e3; padding: 5px 6px; } .pdf tr { page-break-inside: avoid; }
+          .pdf .pos { color: #17834f; font-weight: 700; } .pdf .neg { color: #b4483a; font-weight: 700; }
+          .pdf .acca { border: 1px solid #dde2dc; border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; page-break-inside: avoid; }
+          .pdf .acca-h { display: flex; gap: 10px; align-items: baseline; } .pdf .acca-h span { color: #5e6862; } .pdf .acca-h em { margin-left: auto; font-style: normal; }
+          .pdf .leg { font-size: 11px; color: #33403a; } .pdf .note { color: #5e6862; font-size: 10.5px; margin-top: 14px; }
+        </style>
+        <h1>Футбол Аналітика — статистика прогнозів</h1>
+        <div class="meta">Період: ${esc(period)} · сформовано ${esc(new Date().toLocaleString('uk-UA'))}</div>
+        <div class="band"></div>
+        <h2>Підсумок</h2>
+        ${table(['Тип рекомендацій', ...H.slice(1)], summary)}
+        <h2>Основні ставки за рівнем впевненості</h2>
+        ${table(H, byLevel)}
+        ${byGroup ? `<h2>Найкращі варіанти за групами ринків</h2>${table(H, byGroup)}` : ''}
+        <h2>Рекомендації за діапазонами коефіцієнтів</h2>
+        ${table(H, byBand)}
+        <h2>Експреси за типами</h2>
+        ${table(H, byCat)}
+        ${accaList ? `<h2>Розраховані експреси</h2>${accaList}` : ''}
+        ${journal ? `<h2>Журнал основних ставок</h2>${table(['Дата', 'Турнір', 'Матч', 'Рахунок', 'Ставка', 'Ймов.', ''], journal)}` : ''}
+        <p class="note">«Очікувалось» — середня ймовірність за прогнозом додатка. Прибуток — при ставці 1 од. на кожну рекомендацію: для основних і цінних ставок за кф DraftKings, якщо він був, інакше за справедливим кф; у вашого букмекера кф зазвичай на 5–8% нижчий. Прогнози ймовірнісні та не гарантують виграшу. 18+.</p>
+      </div>`;
+  }
+
+  async function exportPdf(btn) {
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Створення PDF…';
+    const holder = document.createElement('div');
+    holder.style.cssText = 'position:fixed;left:-10000px;top:0;background:#fff';
+    holder.innerHTML = reportHtml();
+    document.body.appendChild(holder);
+    try {
+      await loadHtml2pdf();
+      await window.html2pdf().set({
+        margin: [10, 10, 12, 10],
+        filename: `zvit-statystyka-${FP.localDate(0)}.pdf`,
+        image: { type: 'jpeg', quality: 0.95 },
+        html2canvas: { scale: 2, backgroundColor: '#ffffff' },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.acca'] },
+      }).from(holder.firstElementChild).save();
+    } catch (e) {
+      toast(e.message || 'Не вдалося створити PDF');
+    } finally {
+      holder.remove();
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
+
   // ---------- Експорт у CSV (роздільник «;» і десяткова кома — для українського Excel) ----------
   function exportCsv(tab) {
     const num = x => (x == null ? '' : String(+x.toFixed(3)).replace('.', ','));
@@ -1639,12 +1744,12 @@
       }
     } else if (tab === 'picks' || tab === 'bands') {
       rows = [['Дата', 'Час', 'Турнір', 'Господарі', 'Гості', 'Рахунок', tab === 'picks' ? 'Група ринків' : 'Діапазон кф',
-        'Ставка', 'Ймовірність', 'Кф', 'Результат', 'Відтворено']];
+        'Ставка', 'Ймовірність', 'Кф', 'Результат']];
       for (const r of withStatuses(tab)) {
         for (const x of r.items) {
           rows.push([FP.dateOfTs(r.ts), timeOf(r.ts), leagueLabel(r.slug), r.home, r.away, x.st.score || '',
             tab === 'picks' ? x.group : x.band, x.short, num(x.p), num(tab === 'bands' ? x.k : 1 / x.p),
-            RES[x.st.s] || 'немає даних', r.rec ? 'так' : '']);
+            RES[x.st.s] || 'немає даних']);
         }
       }
     } else {
@@ -1672,6 +1777,7 @@
     if (b.dataset.htab) { state.histTab = b.dataset.htab; renderHistory(); }
     else if (b.dataset.hper != null) { state.histPeriod = Number(b.dataset.hper); renderHistory(); }
     else if (b.dataset.export) exportCsv(b.dataset.export);
+    else if (b.dataset.pdf) exportPdf(b);
     else if (b.dataset.hclear) {
       if (!confirm('Видалити всю статистику прогнозів і експресів?')) return;
       FP.history.clear();
@@ -1721,6 +1827,7 @@
           <li>Якщо є коефіцієнти букмекера, ймовірності поєднуються: 30% модель + 70% ринок.</li>
           <li>Кутові й картки рахуються окремою моделлю за сезонною статистикою команд, тож це орієнтовна оцінка: вона не знає ні суддю, ні тактику на конкретний матч.</li>
           <li>Тайми рахуються за середньою часткою голів: близько 44% у першому таймі, 56% у другому.</li>
+          <li>Модель відкалібровано на 1091 зіграному матчі 25 чемпіонатів (прогноз за даними до гри): виправлено недооцінку голів, уточнено розкид кутових і карток, неефективні ринки прибрано. ${help('calib')}</li>
           <li>Вкладка «Історія» показує, скільки прогнозів додатка справді зіграло.</li>
         </ul>
       </section>
@@ -1825,15 +1932,21 @@
       const parts = (location.hash.slice(1) || '/').split('/').filter(Boolean);
       if (!parts.length) await loadHome(renderId, false, true);
       else if (parts[0] === 'match') await viewMatch(parts[1], parts[2], true);
-      else if (parts[0] === 'live') {
-        // Не перемальовуємо, якщо користувач розгорнув «Усі ринки» — щоб не згорталось під пальцем.
-        if (!document.querySelector('.live-all[open]')) await viewLive(true);
-      }
     } finally {
       ticking = false;
     }
   }
   setInterval(tick, TICK);
+
+  // Лайв оновлюється постійно — кожні 15 секунд, поки розділ відкритий.
+  let liveBusy = false;
+  setInterval(async () => {
+    if (liveBusy || document.hidden || !location.hash.startsWith('#/live')) return;
+    // Не перемальовуємо, якщо розгорнуто «Усі ринки», — щоб список не згортався під пальцем.
+    if (document.querySelector('.live-all[open]')) return;
+    liveBusy = true;
+    try { await viewLive(true); } finally { liveBusy = false; }
+  }, 15 * 1000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
 
   route();

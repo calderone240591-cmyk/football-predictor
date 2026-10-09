@@ -20,11 +20,19 @@ FP.model = (() => {
   const MARKET_WEIGHT = 0.7;  // ринок зазвичай точніший за чисту статистику
   const XG_WEIGHT = 0.4;      // частка xG в рейтингах, коли xG доступний
   const FIRST_HALF_SHARE = 0.44;
-  const MIN_TIP_ODDS = 1.30;  // занадто «короткі» ставки не рекомендуємо як основні
+  const MIN_TIP_ODDS = 1.50;  // рекомендації — від кф 1.5
   const MAX_TIP_ODDS = 2.20;
   const VALUE_EDGE = 0.03;    // мінімальна перевага над букмекером, щоб назвати ставку цінною
 
   const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+
+  // Калібрування за бектестом (1091 зіграний матч 25 чемпіонатів за 45 днів, прогноз за даними
+  // до матчу; підбір на старших матчах, перевірка на свіжіших): модель недооцінювала голи —
+  // господарям ×1.06, гостям ×1.12. Середня кількість карток збігалась, але розкид був зашироким:
+  // для карток розподіл майже пуассонівський (1.05), для кутових — ширший (1.45).
+  const TUNE = { home: 1.06, away: 1.12, cards: 1 };
+  const CORNERS_DISP = 1.45;
+  const CARDS_DISP = 1.05;
 
   const isResult = e => e.state === 'post' && e.completed && e.home.score != null && e.away.score != null;
 
@@ -238,34 +246,27 @@ FP.model = (() => {
 
   // ---------- ринки ----------
   // Ринки за рахунком основного часу. hit(h, a) → true / false / null (повернення ставки).
-  const G = { RES: 'Результат', TOT: 'Тотал голів', BTTS: 'Обидві заб\'ють', HCP: 'Фори', TT: 'Індивідуальні тотали', NUM: 'Кількість голів', COMBO: 'Комбіновані', HALF: 'Тайми', CORN: 'Кутові', CARD: 'Жовті картки' };
+  const G = { RES: 'Результат', TOT: 'Тотал голів', BTTS: 'Обидві заб\'ють', HCP: 'Фори', TT: 'Індивідуальні тотали', COMBO: 'Комбіновані', HALF: 'Тайми', CORN: 'Кутові', CARD: 'Жовті картки' };
 
+  // Набір ринків відібрано за бектестом (1091 матч): прибрано ринки, де модель систематично
+  // помилялась або які майже випадкові (точна кількість голів, парний/непарний, «на нуль»,
+  // «всуху», комбінації з ТМ), а також дублікати («12», «нічия — повернення»).
   const SCORE_MARKETS = [
     ['1', G.RES, 'П1', 'Перемога господарів', (h, a) => h > a],
     ['X', G.RES, 'Нічия', 'Нічия', (h, a) => h === a],
     ['2', G.RES, 'П2', 'Перемога гостей', (h, a) => h < a],
     ['1X', G.RES, '1X', 'Господарі не програють (1X)', (h, a) => h >= a],
     ['X2', G.RES, 'X2', 'Гості не програють (X2)', (h, a) => h <= a],
-    ['12', G.RES, '12', 'Без нічиєї (12)', (h, a) => h !== a],
-    ['DNB1', G.RES, 'П1 (н. повер.)', 'П1, нічия — повернення', (h, a) => (h === a ? null : h > a)],
-    ['DNB2', G.RES, 'П2 (н. повер.)', 'П2, нічия — повернення', (h, a) => (h === a ? null : a > h)],
 
-    ['O05', G.TOT, 'ТБ 0.5', 'Тотал більше 0.5', (h, a) => h + a >= 1],
     ['O15', G.TOT, 'ТБ 1.5', 'Тотал більше 1.5', (h, a) => h + a >= 2],
-    ['U15', G.TOT, 'ТМ 1.5', 'Тотал менше 1.5', (h, a) => h + a <= 1],
     ['O25', G.TOT, 'ТБ 2.5', 'Тотал більше 2.5', (h, a) => h + a >= 3],
     ['U25', G.TOT, 'ТМ 2.5', 'Тотал менше 2.5', (h, a) => h + a <= 2],
     ['O35', G.TOT, 'ТБ 3.5', 'Тотал більше 3.5', (h, a) => h + a >= 4],
     ['U35', G.TOT, 'ТМ 3.5', 'Тотал менше 3.5', (h, a) => h + a <= 3],
-    ['O45', G.TOT, 'ТБ 4.5', 'Тотал більше 4.5', (h, a) => h + a >= 5],
     ['U45', G.TOT, 'ТМ 4.5', 'Тотал менше 4.5', (h, a) => h + a <= 4],
 
     ['BTTS_Y', G.BTTS, 'ОЗ так', 'Обидві заб\'ють — так', (h, a) => h > 0 && a > 0],
     ['BTTS_N', G.BTTS, 'ОЗ ні', 'Обидві заб\'ють — ні', (h, a) => h === 0 || a === 0],
-    ['CS_H', G.BTTS, 'Гості не заб\'ють', 'Господарі на нуль (гості не заб\'ють)', (h, a) => a === 0],
-    ['CS_A', G.BTTS, 'Господарі не заб\'ють', 'Гості на нуль (господарі не заб\'ють)', (h, a) => h === 0],
-    ['WTN_H', G.BTTS, 'П1 всуху', 'Перемога господарів всуху', (h, a) => h > a && a === 0],
-    ['WTN_A', G.BTTS, 'П2 всуху', 'Перемога гостей всуху', (h, a) => a > h && h === 0],
 
     ['H-1.5', G.HCP, 'Ф1 (−1.5)', 'Фора господарів −1.5 (виграють з різницею 2+)', (h, a) => h - a >= 2],
     ['H+1.5', G.HCP, 'Ф1 (+1.5)', 'Фора господарів +1.5 (не програють з різницею 2+)', (h, a) => a - h <= 1],
@@ -287,26 +288,10 @@ FP.model = (() => {
     ['AO25', G.TT, 'ІТ2 Б 2.5', 'Гості заб\'ють 3+', (h, a) => a >= 3],
     ['AU25', G.TT, 'ІТ2 М 2.5', 'Гості заб\'ють не більше 2', (h, a) => a <= 2],
 
-    ['N0', G.NUM, '0 голів', 'Рівно 0 голів', (h, a) => h + a === 0],
-    ['N1', G.NUM, '1 гол', 'Рівно 1 гол', (h, a) => h + a === 1],
-    ['N2', G.NUM, '2 голи', 'Рівно 2 голи', (h, a) => h + a === 2],
-    ['N3', G.NUM, '3 голи', 'Рівно 3 голи', (h, a) => h + a === 3],
-    ['N4', G.NUM, '4 голи', 'Рівно 4 голи', (h, a) => h + a === 4],
-    ['N5', G.NUM, '5+ голів', '5 і більше голів', (h, a) => h + a >= 5],
-    ['N23', G.NUM, '2–3 голи', '2 або 3 голи', (h, a) => h + a === 2 || h + a === 3],
-    ['ODD', G.NUM, 'Непарний', 'Непарна кількість голів', (h, a) => (h + a) % 2 === 1],
-    ['EVEN', G.NUM, 'Парний', 'Парна кількість голів', (h, a) => (h + a) % 2 === 0],
-
     ['1&O15', G.COMBO, 'П1 + ТБ 1.5', 'Перемога господарів і тотал більше 1.5', (h, a) => h > a && h + a >= 2],
     ['1&O25', G.COMBO, 'П1 + ТБ 2.5', 'Перемога господарів і тотал більше 2.5', (h, a) => h > a && h + a >= 3],
-    ['2&O15', G.COMBO, 'П2 + ТБ 1.5', 'Перемога гостей і тотал більше 1.5', (h, a) => a > h && h + a >= 2],
-    ['2&O25', G.COMBO, 'П2 + ТБ 2.5', 'Перемога гостей і тотал більше 2.5', (h, a) => a > h && h + a >= 3],
-    ['1&BTTS', G.COMBO, 'П1 + ОЗ', 'Перемога господарів і обидві заб\'ють', (h, a) => h > a && a > 0],
-    ['2&BTTS', G.COMBO, 'П2 + ОЗ', 'Перемога гостей і обидві заб\'ють', (h, a) => a > h && h > 0],
     ['1X&O15', G.COMBO, '1X + ТБ 1.5', 'Господарі не програють і тотал більше 1.5', (h, a) => h >= a && h + a >= 2],
     ['X2&O15', G.COMBO, 'X2 + ТБ 1.5', 'Гості не програють і тотал більше 1.5', (h, a) => a >= h && h + a >= 2],
-    ['1X&U35', G.COMBO, '1X + ТМ 3.5', 'Господарі не програють і тотал менше 3.5', (h, a) => h >= a && h + a <= 3],
-    ['X2&U35', G.COMBO, 'X2 + ТМ 3.5', 'Гості не програють і тотал менше 3.5', (h, a) => a >= h && h + a <= 3],
     ['BTTS&O25', G.COMBO, 'ОЗ + ТБ 2.5', 'Обидві заб\'ють і тотал більше 2.5', (h, a) => h > 0 && a > 0 && h + a >= 3],
   ].map(([key, group, short, long, hit]) => ({ key, group, short, long, hit }));
 
@@ -314,7 +299,7 @@ FP.model = (() => {
 
   // Ринки, з яких обирається основна рекомендація (найзрозуміліші й найпоширеніші).
   const TIP_GROUPS = new Set([G.RES, G.TOT, G.BTTS, G.HCP, G.TT]);
-  const TIP_EXCLUDE = new Set(['12', 'DNB1', 'DNB2', 'O05', 'HO05', 'AO05']);
+  const TIP_EXCLUDE = new Set(['HO05', 'AO05', 'U45']);
 
   // Діапазони коефіцієнтів для розділу «Кф 1.64–9.99» і ринки, з яких обираються рекомендації.
   const ODDS_BANDS = [[1.64, 2.5], [2.5, 4.5], [4.5, 9.99]];
@@ -339,8 +324,7 @@ FP.model = (() => {
     const h1 = poissonPmf(lh * FIRST_HALF_SHARE, N), a1 = poissonPmf(la * FIRST_HALF_SHARE, N);
     const h2 = poissonPmf(lh * (1 - FIRST_HALF_SHARE), N), a2 = poissonPmf(la * (1 - FIRST_HALF_SHARE), N);
     const res = (x, y) => (x > y ? '1' : x === y ? 'X' : '2');
-    const p = { HT1: 0, HTX: 0, HT2: 0, HTO05: 0, HTO15: 0, H2O05: 0, H2O15: 0, BOTHH: 0, MORE1: 0, MORE2: 0, MOREEQ: 0 };
-    const htft = {};
+    const p = { HT1: 0, HTX: 0, HT2: 0, HTO05: 0, HTO15: 0, H2O05: 0, H2O15: 0, BOTHH: 0 };
     for (let x1 = 0; x1 <= N; x1++) for (let y1 = 0; y1 <= N; y1++) {
       const p1 = h1[x1] * a1[y1];
       if (p1 < 1e-9) continue;
@@ -354,28 +338,20 @@ FP.model = (() => {
         if (g2 >= 1) p.H2O05 += v;
         if (g2 >= 2) p.H2O15 += v;
         if (g1 >= 1 && g2 >= 1) p.BOTHH += v;
-        if (g1 > g2) p.MORE1 += v; else if (g2 > g1) p.MORE2 += v; else p.MOREEQ += v;
-        const k = `${res(x1, y1)}/${res(x1 + x2, y1 + y2)}`;
-        htft[k] = (htft[k] || 0) + v;
       }
     }
+    // Без нічиєї 1-го тайму, «тайм/матч» і «результативнішого тайму» — за бектестом слабкі.
     const list = [
       ['HT1', 'П1 1-й тайм', 'Господарі виграють 1-й тайм'],
-      ['HTX', 'Нічия 1-й тайм', 'Нічия в 1-му таймі'],
       ['HT2', 'П2 1-й тайм', 'Гості виграють 1-й тайм'],
       ['HTO05', 'ТБ 0.5 1-й т.', 'Гол у 1-му таймі'],
       ['HTO15', 'ТБ 1.5 1-й т.', '2+ голи в 1-му таймі'],
       ['H2O05', 'ТБ 0.5 2-й т.', 'Гол у 2-му таймі'],
       ['H2O15', 'ТБ 1.5 2-й т.', '2+ голи в 2-му таймі'],
       ['BOTHH', 'Гол в обох таймах', 'Голи в обох таймах'],
-      ['MORE2', 'Результативніший 2-й т.', 'У 2-му таймі голів більше'],
-      ['MORE1', 'Результативніший 1-й т.', 'У 1-му таймі голів більше'],
     ].map(([key, short, long]) => ({ key, group: G.HALF, short, long, p: p[key] }));
     list.push({ key: 'HTU15', group: G.HALF, short: 'ТМ 1.5 1-й т.', long: 'Не більше 1 гола в 1-му таймі', p: 1 - p.HTO15 });
-    const htftList = Object.entries(htft).map(([k, v]) => ({
-      key: 'HTFT' + k, group: G.HALF, short: `Т/М ${k.replace('X', 'Н')}`, long: `Тайм/матч ${k.replace(/X/g, 'Н')}`, p: v,
-    }));
-    return list.concat(htftList);
+    return list;
   }
 
   // Кутові й картки за сезонною статистикою команд (stats: { app, cornersFor, cornersAgainst, yellow }).
@@ -386,14 +362,12 @@ FP.model = (() => {
     const aFor = shrink(as.cornersFor / as.app, as.app, 5), aAg = shrink(as.cornersAgainst / as.app, as.app, 5);
     const ch = ((hFor + aAg) / 2) * 1.06;   // господарі зазвичай подають трохи більше кутових
     const ca = ((aFor + hAg) / 2) * 0.94;
-    const cornersTotal = negBinPmf(ch + ca, 1.35, 30);
+    const cornersTotal = negBinPmf(ch + ca, CORNERS_DISP, 30);
     const ph = poissonPmf(ch, 25), pa = poissonPmf(ca, 25);
-    let hMore = 0, aMore = 0;
-    for (let i = 0; i <= 25; i++) for (let j = 0; j <= 25; j++) {
-      if (i > j) hMore += ph[i] * pa[j]; else if (j > i) aMore += ph[i] * pa[j];
-    }
-    const yh = shrink(hs.yellow / hs.app, hs.app, 2.0), ya = shrink(as.yellow / as.app, as.app, 2.0);
-    const cardsTotal = negBinPmf(yh + ya, 1.3, 20);
+    let hMore = 0;
+    for (let i = 0; i <= 25; i++) for (let j = 0; j < i; j++) hMore += ph[i] * pa[j];
+    const yh = shrink(hs.yellow / hs.app, hs.app, 2.0) * TUNE.cards, ya = shrink(as.yellow / as.app, as.app, 2.0) * TUNE.cards;
+    const cardsTotal = negBinPmf(yh + ya, CARDS_DISP, 20);
 
     const out = [];
     for (const line of [7.5, 8.5, 9.5, 10.5, 11.5]) {
@@ -402,11 +376,12 @@ FP.model = (() => {
       out.push({ key: `CU${line}`, group: G.CORN, short: `Кут. ТМ ${line}`, long: `Кутові: тотал менше ${line}`, p: 1 - o });
     }
     out.push({ key: 'CH', group: G.CORN, short: 'Більше кут. — госп.', long: 'Господарі подадуть більше кутових', p: hMore });
-    out.push({ key: 'CA', group: G.CORN, short: 'Більше кут. — гості', long: 'Гості подадуть більше кутових', p: aMore });
-    for (const line of [2.5, 3.5, 4.5, 5.5]) {
-      const o = tailOver(cardsTotal, line);
-      out.push({ key: `YO${line}`, group: G.CARD, short: `ЖК ТБ ${line}`, long: `Жовті картки: більше ${line}`, p: o });
-      out.push({ key: `YU${line}`, group: G.CARD, short: `ЖК ТМ ${line}`, long: `Жовті картки: менше ${line}`, p: 1 - o });
+    // ЖК ТМ 2.5 / 3.5 за бектестом програвали — залишаємо «більше» і ТМ на високих лініях.
+    for (const line of [2.5, 3.5, 4.5]) {
+      out.push({ key: `YO${line}`, group: G.CARD, short: `ЖК ТБ ${line}`, long: `Жовті картки: більше ${line}`, p: tailOver(cardsTotal, line) });
+    }
+    for (const line of [4.5, 5.5]) {
+      out.push({ key: `YU${line}`, group: G.CARD, short: `ЖК ТМ ${line}`, long: `Жовті картки: менше ${line}`, p: 1 - tailOver(cardsTotal, line) });
     }
     return { markets: out, corners: { home: ch, away: ca }, cards: { home: yh, away: ya } };
   }
@@ -442,8 +417,8 @@ FP.model = (() => {
     const hAtt = blend(H.att, useXg && hs.xgf / avgG), hDef = blend(H.def, useXg && hs.xga / avgG);
     const aAtt = blend(A.att, useXg && as.xgf / avgG), aDef = blend(A.def, useXg && as.xga / avgG);
 
-    const mlh = clamp(m.avgH * hAtt * aDef * formFactor(H), 0.15, 4.5);
-    const mla = clamp(m.avgA * aAtt * hDef * formFactor(A), 0.15, 4.5);
+    const mlh = clamp(m.avgH * hAtt * aDef * formFactor(H) * TUNE.home, 0.15, 4.5);
+    const mla = clamp(m.avgA * aAtt * hDef * formFactor(A) * TUNE.away, 0.15, 4.5);
     const modelCore = core(grid(mlh, mla), ev.odds && ev.odds.line);
 
     const market = marketProbs(ev.odds);
@@ -485,17 +460,17 @@ FP.model = (() => {
       .filter(x => x.edge != null && x.edge >= VALUE_EDGE && x.p >= 0.30)
       .sort((x, y) => y.edge - x.edge);
 
-    // Найкращий варіант у кожній групі ринків (ймовірність 55–85%).
+    // Найкращий варіант у кожній групі ринків: найімовірніший з кф від 1.5 до 3 (ймовірність 33–67%).
     const groups = Object.values(G).map(name => {
       const list = markets.filter(x => x.group === name);
-      const pick = list.find(x => x.p >= 0.55 && x.p <= 0.85 && !TIP_EXCLUDE.has(x.key));
+      const pick = list.find(x => x.p >= 1 / 3 && x.p <= 1 / 1.5 && !TIP_EXCLUDE.has(x.key));
       return { name, list, pick };
     }).filter(x => x.list.length);
 
     // Рекомендації в діапазонах коефіцієнтів 1.64–9.99: у кожному діапазоні — цінна ставка
     // (якщо кф букмекера дає перевагу), інакше найімовірніший варіант. Кф — букмекерський, якщо є, інакше справедливий.
     const bands = ODDS_BANDS.map(([lo, hi]) => {
-      const inBand = markets.filter(x => BAND_GROUPS.has(x.group) && !TIP_EXCLUDE.has(x.key) && !x.key.startsWith('N'))
+      const inBand = markets.filter(x => BAND_GROUPS.has(x.group) && !TIP_EXCLUDE.has(x.key))
         .map(x => ({ ...x, k: x.odds || 1 / x.p }))
         .filter(x => x.k >= lo && x.k <= hi);
       const value = inBand.filter(x => x.edge != null && x.edge >= VALUE_EDGE).sort((a, b) => b.edge - a.edge)[0];
@@ -653,7 +628,7 @@ FP.model = (() => {
     const seasonCards2 = (sy[0] != null && sy[1] != null ? sy[0] + sy[1] : 4.2) * 0.6;
     const c2 = 0.6 * seasonCorners2 + 0.4 * c1 * 1.08;
     const y2 = 0.6 * seasonCards2 + 0.4 * y1 * 1.4;
-    const cPmf = negBinPmf(c2, 1.3, 25), yPmf = negBinPmf(y2, 1.3, 15);
+    const cPmf = negBinPmf(c2, CORNERS_DISP, 25), yPmf = negBinPmf(y2, CARDS_DISP, 15);
     for (const d of [0.5, 1.5, 2.5, 3.5, 4.5, 5.5]) {
       const t = c1 + Math.round(c2) - 3 + d;
       if (t <= c1) continue;
@@ -745,12 +720,10 @@ FP.model = (() => {
     const mk = MARKET_BY_KEY.get(key);
     if (mk) return mk.hit(h, a);
     const ht = extra && extra.ht, box = extra && extra.box;
-    if (ht && /^HT|^H2|^BOTHH|^MORE/.test(key)) {
-      const h1 = ht.home, a1 = ht.away, h2 = h - h1, a2 = a - a1, g1 = h1 + a1, g2 = h2 + a2;
-      const r = (x, y) => (x > y ? '1' : x === y ? 'X' : '2');
+    if (ht && /^HT|^H2|^BOTHH/.test(key)) {
+      const h1 = ht.home, a1 = ht.away, g1 = h1 + a1, g2 = h + a - g1;
       switch (key) {
         case 'HT1': return h1 > a1;
-        case 'HTX': return h1 === a1;
         case 'HT2': return a1 > h1;
         case 'HTO05': return g1 >= 1;
         case 'HTO15': return g1 >= 2;
@@ -758,10 +731,6 @@ FP.model = (() => {
         case 'H2O05': return g2 >= 1;
         case 'H2O15': return g2 >= 2;
         case 'BOTHH': return g1 >= 1 && g2 >= 1;
-        case 'MORE1': return g1 > g2;
-        case 'MORE2': return g2 > g1;
-        default:
-          if (key.startsWith('HTFT')) return key.slice(4) === `${r(h1, a1)}/${r(h, a)}`;
       }
     }
     if (box) {
@@ -770,12 +739,11 @@ FP.model = (() => {
       if ((m = /^CO([\d.]+)$/.exec(key))) return corners > +m[1];
       if ((m = /^CU([\d.]+)$/.exec(key))) return corners < +m[1];
       if (key === 'CH') return box.homeCorners > box.awayCorners;
-      if (key === 'CA') return box.awayCorners > box.homeCorners;
       if ((m = /^YO([\d.]+)$/.exec(key))) return cards > +m[1];
       if ((m = /^YU([\d.]+)$/.exec(key))) return cards < +m[1];
     }
     return undefined;
   }
 
-  return { build, predict, value, settle, isResult, liveAnalysis, liveSettle, GROUPS: G, ODDS_BANDS };
+  return { build, predict, value, settle, isResult, liveAnalysis, liveSettle, GROUPS: G, ODDS_BANDS, TUNE };
 })();
