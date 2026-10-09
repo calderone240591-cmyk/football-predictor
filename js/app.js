@@ -193,6 +193,7 @@
     if (h.startsWith('#/settings') || h.startsWith('#/info')) return 'info';
     if (h.startsWith('#/history')) return 'history';
     if (h.startsWith('#/express')) return 'express';
+    if (h.startsWith('#/live')) return 'live';
     return 'home';
   }
 
@@ -1072,6 +1073,121 @@
   FP.slip.onChange(updateSlipBadge);
   updateSlipBadge();
 
+  // ---------- Лайв: матчі в перерві ----------
+  const isHalftime = ev => ev.state === 'in' && /HALFTIME/.test(ev.status);
+  state.liveK2 = true;   // показувати лише ринки з кф від 2.00
+
+  async function viewLive(silent = false) {
+    const rid = silent ? renderId : ++renderId;
+    if (!silent) {
+      setHeader('Лайв');
+      $view.innerHTML = '<div class="loading">Пошук матчів у перерві…</div>';
+    }
+    const boards = await api.pool(LEAGUES, 6, async l => {
+      try { return (await api.liveBoard(l.slug)).events.map(ev => ({ slug: l.slug, ev })); } catch { return []; }
+    });
+    if (rid !== renderId) return;
+    const all = boards.flat();
+    all.forEach(x => state.events.set(evKey(x.slug, x.ev.id), x));
+    const halftime = all.filter(x => isHalftime(x.ev));
+    const playing = all.filter(x => isLive(x.ev) && !isHalftime(x.ev)).sort((a, b) => a.ev.ts - b.ev.ts);
+    const soon = all.filter(x => isUpcoming(x.ev) && x.ev.ts * 1000 > Date.now() && x.ev.ts * 1000 - Date.now() < 8 * 3600e3)
+      .sort((a, b) => a.ev.ts - b.ev.ts);
+
+    // Аналіз кожного матчу в перерві: передматчевий прогноз + статистика 1-го тайму.
+    const analyses = [];
+    const slugs = [...new Set(halftime.map(x => x.slug))];
+    for (const slug of [...slugs.filter(s => !LEAGUE_BY_SLUG.get(s).cup), ...slugs.filter(s => LEAGUE_BY_SLUG.get(s).cup)]) {
+      await ensureModel(slug);
+      if (rid !== renderId) return;
+    }
+    await loadTeamStats(halftime);
+    for (const x of halftime) {
+      const entry = state.models.get(x.slug);
+      if (!entry || entry.error) continue;
+      const ctx = ctxFor(x.ev);
+      const pre = model.predict(entry.m, x.ev, ctx);
+      if (!pre) continue;
+      let ls;
+      try { ls = await api.liveStats(x.slug, x.ev.id); } catch { continue; }
+      if (rid !== renderId) return;
+      const h = ls.home.score ?? x.ev.home.score ?? 0, a = ls.away.score ?? x.ev.away.score ?? 0;
+      const an = model.liveAnalysis({ lh: pre.lh, la: pre.la }, { h, a, home: ls.home, away: ls.away }, ctx);
+      FP.history.recordLive(x.slug, x.ev, { home: h, away: a }, an.recs);
+      analyses.push({ ...x, ls, h, a, an });
+    }
+    state.liveData = { analyses, playing, soon, at: Date.now() };
+    renderLive();
+  }
+
+  function renderLive() {
+    const { analyses, playing, soon, at } = state.liveData;
+    const k2 = m => !state.liveK2 || 1 / m.p >= 2;
+    const statRow = (label, h, a, suffix = '') => `<tr><td>${h ?? '—'}${h != null ? suffix : ''}</td><th>${label}</th><td>${a ?? '—'}${a != null ? suffix : ''}</td></tr>`;
+    const card = ({ slug, ev, ls, h, a, an }) => `
+      <section class="card live-card">
+        <a class="band-head" href="#/match/${slug}/${ev.id}">
+          <small><img src="${FP.leagueLogo(LEAGUE_BY_SLUG.get(slug))}" alt="">${esc(leagueLabel(slug))}</small>
+        </a>
+        <div class="live-score">
+          <span>${esc(ev.home.name)}</span><b>${h}:${a}</b><span>${esc(ev.away.name)}</span>
+        </div>
+        <div class="live-status">Перерва</div>
+        <table class="compare live-stats"><tbody>
+          ${statRow('Удари', ls.home.shots, ls.away.shots)}
+          ${statRow('У площину', ls.home.sot, ls.away.sot)}
+          ${statRow('Володіння', ls.home.poss != null ? Math.round(ls.home.poss) : null, ls.away.poss != null ? Math.round(ls.away.poss) : null, '%')}
+          ${statRow('Кутові', ls.home.corners, ls.away.corners)}
+          ${statRow('Жовті', ls.home.yellow, ls.away.yellow)}
+          ${(ls.home.red || ls.away.red) ? statRow('Червоні', ls.home.red, ls.away.red) : ''}
+        </tbody></table>
+        <h3>Рекомендації на 2-й тайм · кф від 2.00</h3>
+        <div class="live-recs">${an.recs.length ? an.recs.map(m => `
+          <div class="live-rec"><span>${esc(m.group)}</span><b>${esc(m.long)}</b><i>${pct(m.p)} · кф ${fair(m.p)}</i></div>`).join('')
+          : '<p class="hint">Немає ринків з кф від 2.00.</p>'}</div>
+        <h3>Аналіз</h3>
+        <ul class="reasons">${an.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>
+        <details class="mgroup live-all">
+          <summary>Усі ринки${state.liveK2 ? ' з кф від 2.00' : ''}<span>${an.markets.filter(k2).length}</span></summary>
+          ${Object.values(an.groups).map(g => {
+            const list = an.markets.filter(m => m.group === g && k2(m));
+            return list.length ? `<div class="live-group">${esc(g)}</div>
+              <table class="markets"><tbody>${list.map(m => `
+                <tr><td>${esc(m.long)}</td>
+                  <td><div class="pbar"><i style="width:${(m.p * 100).toFixed(1)}%"></i><span>${pct(m.p)}</span></div></td>
+                  <td><b>${fair(m.p)}</b></td></tr>`).join('')}</tbody></table>` : '';
+          }).join('')}
+        </details>
+      </section>`;
+
+    $view.innerHTML = `
+      <div class="live-top">
+        <span>Оновлено о ${timeOf(at / 1000)} · щохвилини</span>
+        <label class="switch"><input type="checkbox" id="live-k2" ${state.liveK2 ? 'checked' : ''}> лише кф ≥ 2.00</label>
+      </div>
+      ${analyses.length ? analyses.map(card).join('') : `
+        <section class="card">
+          <h3>Зараз немає матчів у перерві</h3>
+          <p class="hint">Розділ показує матчі лише під час перерви: тоді вже відома статистика 1-го тайму, а 2-й ще попереду. Сторінка оновлюється щохвилини — відкрийте її під час перерви.</p>
+        </section>`}
+      ${playing.length ? `<h2 class="section-title">Зараз ідуть</h2>
+        <section class="card">${playing.map(({ slug, ev }) => `
+          <a class="hrow" href="#/match/${slug}/${ev.id}">
+            <div class="hrow-main"><small>${esc(leagueLabel(slug))}</small><span>${esc(ev.home.name)} — ${esc(ev.away.name)} <b>${ev.home.score ?? 0}:${ev.away.score ?? 0}</b></span></div>
+            <div class="hrow-st"><span class="live">${esc(ev.clock || '')}</span></div>
+          </a>`).join('')}</section>` : ''}
+      ${soon.length ? `<h2 class="section-title">Найближчі матчі</h2>
+        <section class="card">${soon.slice(0, 20).map(({ slug, ev }) => `
+          <a class="hrow" href="#/match/${slug}/${ev.id}">
+            <div class="hrow-main"><small>${esc(leagueLabel(slug))}</small><span>${esc(ev.home.name)} — ${esc(ev.away.name)}</span></div>
+            <div class="hrow-st"><small class="soon">${esc(timeOf(ev.ts))}<br>перерва ≈ ${esc(timeOf(ev.ts + 47 * 60))}</small></div>
+          </a>`).join('')}</section>` : ''}
+      <p class="hint pad">Живих коефіцієнтів у безкоштовних даних немає, тож показано справедливий кф за нашою ймовірністю: «кф від 2.00» = ймовірність до 50%. У лайві букмекер зазвичай дає на 5–10% менше. Прогноз 2-го тайму поєднує передматчеву силу команд зі статистикою 1-го тайму, рахунком і вилученнями. ${help('fair')}</p>`;
+
+    const $k2 = document.getElementById('live-k2');
+    if ($k2) $k2.onchange = () => { state.liveK2 = $k2.checked; renderLive(); };
+  }
+
   // ---------- Статистика прогнозів ----------
   // Одиночні: основна рекомендація і цінна ставка кожного матчу (останній прогноз перед стартом).
   // Експреси: усі 11 готових експресів — активні й замінені.
@@ -1089,13 +1205,14 @@
 
     const singles = FP.history.all();
     const accas = [...FP.history.archivedAccas(), ...Object.values(FP.history.activeAccas())];
-    if (!singles.length && !accas.length) {
+    const lives = FP.history.allLive();
+    if (!singles.length && !accas.length && !lives.length) {
       $view.innerHTML = `<div class="empty">Статистика поки порожня.<br>Додаток запам'ятовує свої прогнози й експреси перед матчами, а після матчів показує тут, скільки з них зіграло.</div>`;
       return;
     }
 
     // Результати матчів беремо з даних сезонів відповідних турнірів.
-    const slugs = [...new Set([...singles.map(e => e.slug), ...accas.flatMap(a => a.legs.map(l => l.slug))])]
+    const slugs = [...new Set([...singles.map(e => e.slug), ...lives.map(e => e.slug), ...accas.flatMap(a => a.legs.map(l => l.slug))])]
       .filter(s => LEAGUE_BY_SLUG.has(s));
     await api.pool(slugs, 4, async slug => {
       try {
@@ -1107,9 +1224,13 @@
 
     // Для ставок на тайми, кутові й картки потрібні факти матчу (рахунок 1-го тайму, статистика).
     const FACT_GROUPS = new Set(['Тайми', 'Кутові', 'Жовті картки']);
-    const needFacts = singles.filter(e => {
+    const LIVE_FACT_GROUPS = new Set(['Кутові', 'Жовті картки']);
+    const needFacts = [
+      ...singles.filter(e => (e.picks || []).some(p => FACT_GROUPS.has(p.group))),
+      ...lives.filter(e => e.picks.some(p => LIVE_FACT_GROUPS.has(p.group))),
+    ].filter(e => {
       const x = state.events.get(evKey(e.slug, e.id));
-      return x && isFinished(x.ev) && !state.facts.has(e.id) && (e.picks || []).some(p => FACT_GROUPS.has(p.group));
+      return x && isFinished(x.ev) && !state.facts.has(e.id);
     }).sort((a, b) => b.ts - a.ts).slice(0, 200);
     if (needFacts.length) {
       $view.innerHTML = `<div class="loading">Завантаження статистики матчів (${needFacts.length})…</div>`;
@@ -1118,8 +1239,67 @@
       });
       if (rid !== renderId) return;
     }
-    state.hist = { singles, accas };
+    state.hist = { singles, accas, lives };
     renderHistory();
+  }
+
+  // Статус лайв-ставки за фінальним рахунком (і кутовими/картками матчу).
+  function liveStatus(e, key) {
+    const x = state.events.get(evKey(e.slug, e.id));
+    const ev = x && x.ev;
+    if (!ev) return { s: e.ts * 1000 + 4 * 3600e3 < Date.now() ? 'unknown' : 'pending' };
+    if (VOID_STATUS.test(ev.status)) return { s: 'void' };
+    if (!isFinished(ev)) return { s: isLive(ev) ? 'live' : 'pending' };
+    const f = state.facts.get(e.id);
+    const r = model.liveSettle(key, { home: ev.home.score, away: ev.away.score }, e.ht, f && f.box);
+    const score = `${ev.home.score}:${ev.away.score}`;
+    if (r === undefined) return { s: 'nodata', score };
+    return { s: r === true ? 'win' : r === false ? 'loss' : 'void', score };
+  }
+
+  function liveRows() {
+    return state.hist.lives.filter(e => inPeriod(e.ts)).map(e => ({
+      ...e, items: e.picks.map(p => ({ ...p, st: liveStatus(e, p.key) })),
+    })).sort((a, b) => b.ts - a.ts);
+  }
+
+  function liveHistHtml() {
+    const rows = liveRows();
+    const done = rows.flatMap(r => r.items).filter(x => DONE(x.st.s));
+    const wins = done.filter(x => x.st.s === 'win').length;
+    const profit = done.reduce((s, x) => s + (x.st.s === 'win' ? x.k - 1 : -1), 0);
+    const exp = done.length ? done.reduce((s, x) => s + x.p, 0) / done.length : null;
+    const groups = [...new Set(done.map(x => x.group))].map(g => {
+      const list = done.filter(x => x.group === g);
+      return rateRow(g, list.filter(x => x.st.s === 'win').length, list.length, list.reduce((s, x) => s + x.p, 0) / list.length);
+    }).join('');
+    const byDay = new Map();
+    for (const r of rows) {
+      const d = dateOf(r.ts);
+      if (!byDay.has(d)) byDay.set(d, []);
+      byDay.get(d).push(r);
+    }
+    const days = [...byDay].map(([d, list]) => `
+      <div class="day-head"><b>${esc(d)}</b></div>
+      ${list.map(r => `
+        <a class="hrow" href="#/match/${r.slug}/${r.id}">
+          <div class="hrow-main">
+            <small>${esc(leagueLabel(r.slug))} · перерва ${r.ht.home}:${r.ht.away}</small>
+            <span>${esc(r.home)} — ${esc(r.away)} ${r.items[0].st.score ? `<b>${esc(r.items[0].st.score)}</b>` : ''}</span>
+            <div class="pchips">${r.items.map(x => `<span class="pchip ${x.st.s}">${esc(x.short)} @${x.k.toFixed(2)} ${STATUS_ICON[x.st.s] || ''}</span>`).join('')}</div>
+          </div>
+        </a>`).join('')}`).join('');
+    return `
+      <section class="card">
+        <div class="kpis">
+          <div><b>${pctOf(wins, done.length)}</b><span>зіграло<br>${wins} з ${done.length}</span></div>
+          <div><b>${exp != null ? Math.round(exp * 100) + '%' : '—'}</b><span>очікувалось<br>за прогнозом</span></div>
+          <div><b class="${profit >= 0 ? 'ok' : 'bad'}">${done.length ? units(profit) : '—'}</b><span>прибуток, од.<br>за справедливим кф</span></div>
+        </div>
+        <p class="hint">Записуються 3 рекомендації з кф від 2.00, зроблені під час перерви, коли ви відкривали розділ «Лайв». Прибуток — при ставці 1 од. за справедливим кф; у букмекера в лайві кф нижчий.</p>
+      </section>
+      ${groups ? `<section class="card"><h3>За ринками</h3>${groups}</section>` : ''}
+      ${days ? `<section class="card"><h3>По днях</h3>${days}</section>` : '<div class="empty">За цей період лайв-рекомендацій ще немає.</div>'}`;
   }
 
   // Відтворення прогнозів з дня запуску (FP.APP_START) для зіграних матчів чемпіонатів, яких немає
@@ -1195,6 +1375,7 @@
           <button class="${tab === 'singles' ? 'on' : ''}" data-htab="singles">Основні</button>
           <button class="${tab === 'picks' ? 'on' : ''}" data-htab="picks">Варіанти</button>
           <button class="${tab === 'bands' ? 'on' : ''}" data-htab="bands">Кф 1.64+</button>
+          <button class="${tab === 'live' ? 'on' : ''}" data-htab="live">Лайв</button>
           <button class="${tab === 'accas' ? 'on' : ''}" data-htab="accas">Експреси</button>
         </div>
         <div class="chips">${periods.map(([d, l]) => `<button class="chip ${state.histPeriod === d ? 'on' : ''}" data-hper="${d}">${l}</button>`).join('')}</div>
@@ -1205,7 +1386,7 @@
         <button class="btn ghost" data-hclear="1">Очистити статистику</button>
       </div>
       <p class="hint pad">CSV відкривається в Excel, Google Таблицях чи Numbers. Об'єктивні висновки можна робити після кількох сотень ставок: на десятках результат сильно залежить від везіння.</p>`;
-    const body = { singles: singlesHtml, picks: picksHtml, bands: bandsHtml, accas: accasHtml }[tab]();
+    const body = { singles: singlesHtml, picks: picksHtml, bands: bandsHtml, live: liveHistHtml, accas: accasHtml }[tab]();
     $view.innerHTML = head + body + foot;
   }
 
@@ -1448,6 +1629,14 @@
           num(r.tip.p), ['', 'низька', 'середня', 'висока'][r.tip.level], RES[r.tipSt.s],
           r.value ? r.value.short : '', r.value ? num(r.value.odds) : '', r.valSt ? RES[r.valSt.s] : '']);
       }
+    } else if (tab === 'live') {
+      rows = [['Дата', 'Турнір', 'Господарі', 'Гості', 'Перерва', 'Фінал', 'Ринок', 'Ставка', 'Ймовірність', 'Кф (справедливий)', 'Результат']];
+      for (const r of liveRows()) {
+        for (const x of r.items) {
+          rows.push([FP.dateOfTs(r.ts), leagueLabel(r.slug), r.home, r.away, `${r.ht.home}:${r.ht.away}`, x.st.score || '',
+            x.group, x.short, num(x.p), num(x.k), RES[x.st.s] || 'немає даних']);
+        }
+      }
     } else if (tab === 'picks' || tab === 'bands') {
       rows = [['Дата', 'Час', 'Турнір', 'Господарі', 'Гості', 'Рахунок', tab === 'picks' ? 'Група ринків' : 'Діапазон кф',
         'Ставка', 'Ймовірність', 'Кф', 'Результат', 'Відтворено']];
@@ -1470,7 +1659,7 @@
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `statystyka-${{ singles: 'osnovni', picks: 'varianty', bands: 'kf-1.64-9.99', accas: 'ekspresy' }[tab]}-${FP.localDate(0)}.csv`;
+    a.download = `statystyka-${{ singles: 'osnovni', picks: 'varianty', bands: 'kf-1.64-9.99', live: 'live', accas: 'ekspresy' }[tab]}-${FP.localDate(0)}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -1590,6 +1779,7 @@
       case 'settings': return viewInfo();
       case 'history': return viewHistory();
       case 'express': return viewExpress();
+      case 'live': return viewLive();
       default: return viewHome();
     }
   }
@@ -1635,6 +1825,10 @@
       const parts = (location.hash.slice(1) || '/').split('/').filter(Boolean);
       if (!parts.length) await loadHome(renderId, false, true);
       else if (parts[0] === 'match') await viewMatch(parts[1], parts[2], true);
+      else if (parts[0] === 'live') {
+        // Не перемальовуємо, якщо користувач розгорнув «Усі ринки» — щоб не згорталось під пальцем.
+        if (!document.querySelector('.live-all[open]')) await viewLive(true);
+      }
     } finally {
       ticking = false;
     }

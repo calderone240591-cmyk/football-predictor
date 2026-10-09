@@ -245,6 +245,36 @@ FP.api = (() => {
     return cached(k, 0, `${SITE}${slug}/summary?event=${eventId}`, slimSummary, true);
   }
 
+  // ---------- лайв ----------
+  // Поточний ігровий день турніру (тут є матчі, що йдуть зараз), оновлення раз на 40 с.
+  const liveBoard = slug =>
+    cached(`lb:${slug}`, 40 * 1000, `${SITE}${slug}/scoreboard`, d => ({ events: (d.events || []).map(slimEvent) }));
+
+  // Жива статистика матчу: рахунок, статус і показники обох команд.
+  function liveStats(slug, eventId) {
+    return cached(`ls:${eventId}`, 40 * 1000, `${SITE}${slug}/summary?event=${eventId}`, d => {
+      const comp = d.header && d.header.competitions && d.header.competitions[0];
+      const side = ha => (comp ? comp.competitors.find(c => c.homeAway === ha) : null);
+      const team = c => {
+        const t = c && ((d.boxscore && d.boxscore.teams) || []).find(x => String(x.team.id) === String(c.id));
+        const s = name => {
+          const v = t && (t.statistics || []).find(x => x.name === name);
+          return v ? Number(v.displayValue) : null;
+        };
+        return {
+          score: c && c.score != null ? Number(c.score) : null,
+          shots: s('totalShots'), sot: s('shotsOnTarget'), poss: s('possessionPct'),
+          corners: s('wonCorners'), yellow: s('yellowCards'), red: s('redCards'), fouls: s('foulsCommitted'),
+        };
+      };
+      const st = comp && comp.status;
+      return {
+        status: st && st.type && st.type.name, clock: st && st.displayClock,
+        home: team(side('home')), away: team(side('away')),
+      };
+    });
+  }
+
   // Факти зіграного матчу для розрахунку ставок: рахунок першого тайму, кутові, жовті картки.
   // Матч уже не зміниться, тож кешуємо надовго.
   function matchFacts(slug, eventId) {
@@ -310,5 +340,5 @@ FP.api = (() => {
     return out;
   }
 
-  return { month, monthsAround, season, standings, lineups, teamSeasonStats, matchFacts, clearCache, pool };
+  return { month, monthsAround, season, standings, lineups, teamSeasonStats, matchFacts, liveBoard, liveStats, clearCache, pool };
 })();

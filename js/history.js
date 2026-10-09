@@ -72,6 +72,23 @@ FP.history = (() => {
 
   const has = id => !!data[id];
 
+  // ---------- лайв-рекомендації (у перерві) ----------
+  const LIVE_KEY = 'fp_live';
+  let live = load(LIVE_KEY, {});
+
+  // Фіксуємо рекомендації, поки триває перерва (останній варіант перед 2-м таймом).
+  function recordLive(slug, ev, ht, recs) {
+    live[ev.id] = {
+      slug, ts: ev.ts, home: ev.home.short || ev.home.name, away: ev.away.short || ev.away.name, ht,
+      picks: recs.map(m => ({ key: m.key, group: m.group, short: m.short, p: r3(m.p), k: r3(1 / m.p) })),
+    };
+    const c = cutoff();
+    for (const id of Object.keys(live)) if (live[id].ts < c) delete live[id];
+    save(LIVE_KEY, () => live);
+  }
+
+  const allLive = () => Object.entries(live).map(([id, x]) => ({ id, ...x }));
+
   const all = () => Object.entries(data).map(([id, x]) => ({ id, ...x }));
 
   // ---------- готові експреси ----------
@@ -94,8 +111,9 @@ FP.history = (() => {
   function clear() {
     data = {};
     accas = { slots: {}, archive: [] };
-    try { localStorage.removeItem(KEY); localStorage.removeItem(ACCA_KEY); } catch {}
+    live = {};
+    try { localStorage.removeItem(KEY); localStorage.removeItem(ACCA_KEY); localStorage.removeItem(LIVE_KEY); } catch {}
   }
 
-  return { record, recordReconstructed, has, all, activeAccas, archivedAccas, setActive, retire, clear };
+  return { record, recordReconstructed, recordLive, allLive, has, all, activeAccas, archivedAccas, setActive, retire, clear };
 })();
