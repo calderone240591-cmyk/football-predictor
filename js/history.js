@@ -1,23 +1,19 @@
 // Журнал прогнозів: що додаток радив до початку матчу. Після матчу ставки розраховуються
 // за фінальним рахунком — так видно реальну влучність і прибутковість, а не теоретичну.
-// Зберігається окремо від кешу, тому «Завантажити дані наново» його не стирає.
+// Зберігається в IndexedDB (FP.store, таблиця state) окремо від кешу, тому «Завантажити дані
+// наново» його не стирає. Записи за 25 чемпіонатами швидко переросли б ліміт localStorage.
 FP.history = (() => {
-  const KEY = 'fp_history';
-  const ACCA_KEY = 'fp_accas';
   const KEEP_DAYS = 120;
-  let data = load(KEY, {});
-  let accas = load(ACCA_KEY, { slots: {}, archive: [] });
+  const LEGACY = { singles: 'fp_history', accas: 'fp_accas', live: 'fp_live', version: 'fp_stats_version' };
+  // До завантаження зі сховища записи накопичуються тут і потім об'єднуються з ним.
+  let data = {};
+  let accas = { slots: {}, archive: [] };
+  let live = {};
   const timers = {};
-
-  function load(key, fallback) {
-    try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; }
-  }
 
   function save(key, get) {
     clearTimeout(timers[key]);
-    timers[key] = setTimeout(() => {
-      try { localStorage.setItem(key, JSON.stringify(get())); } catch {}
-    }, 300);
+    timers[key] = setTimeout(() => FP.store.put('state', key, get()), 300);
   }
 
   const cutoff = () => Date.now() / 1000 - KEEP_DAYS * 86400;
@@ -25,13 +21,19 @@ FP.history = (() => {
   function saveSingles() {
     const c = cutoff();
     for (const id of Object.keys(data)) if (data[id].ts < c) delete data[id];
-    save(KEY, () => data);
+    save('singles', () => data);
   }
 
   function saveAccas() {
     const c = cutoff();
     accas.archive = accas.archive.filter(a => a.createdAt / 1000 > c);
-    save(ACCA_KEY, () => accas);
+    save('accas', () => accas);
+  }
+
+  function saveLive() {
+    const c = cutoff();
+    for (const id of Object.keys(live)) if (live[id].ts < c) delete live[id];
+    save('live', () => live);
   }
 
   // ---------- одиночні ----------
@@ -63,28 +65,22 @@ FP.history = (() => {
     saveSingles();
   }
 
+  const all = () => Object.entries(data).map(([id, x]) => ({ id, ...x }));
 
   // ---------- лайв-рекомендації (у перерві) ----------
-  const LIVE_KEY = 'fp_live';
-  let live = load(LIVE_KEY, {});
-
   // Фіксуємо рекомендації, поки триває перерва (останній варіант перед 2-м таймом).
   function recordLive(slug, ev, ht, recs) {
     live[ev.id] = {
       slug, ts: ev.ts, home: ev.home.short || ev.home.name, away: ev.away.short || ev.away.name, ht,
       picks: recs.map(m => ({ key: m.key, group: m.group, short: m.short, p: r3(m.p), k: r3(1 / m.p) })),
     };
-    const c = cutoff();
-    for (const id of Object.keys(live)) if (live[id].ts < c) delete live[id];
-    save(LIVE_KEY, () => live);
+    saveLive();
   }
 
   const allLive = () => Object.entries(live).map(([id, x]) => ({ id, ...x }));
 
-  const all = () => Object.entries(data).map(([id, x]) => ({ id, ...x }));
-
   // ---------- готові експреси ----------
-  // slots: активний експрес у кожному з 11 слотів; archive: замінені експреси (для статистики).
+  // slots: активний експрес у кожному слоті; archive: замінені експреси (для статистики).
   const activeAccas = () => ({ ...accas.slots });
   const archivedAccas = () => accas.archive.slice();
 
@@ -104,16 +100,25 @@ FP.history = (() => {
     data = {};
     accas = { slots: {}, archive: [] };
     live = {};
-    try { localStorage.removeItem(KEY); localStorage.removeItem(ACCA_KEY); localStorage.removeItem(LIVE_KEY); } catch {}
+    for (const k of ['singles', 'accas', 'live']) FP.store.put('state', k, k === 'accas' ? accas : {});
   }
 
-  // Нова версія параметрів рекомендацій — статистика ведеться з нуля (одноразове скидання).
-  try {
-    if (localStorage.getItem('fp_stats_version') !== FP.STATS_VERSION) {
-      clear();
-      localStorage.setItem('fp_stats_version', FP.STATS_VERSION);
-    }
-  } catch {}
+  // ---------- завантаження ----------
+  // Беремо збережене з IndexedDB, а якщо його ще немає — переносимо з localStorage (старі версії).
+  // Записи, зроблені до завантаження, мають пріоритет. Нова версія параметрів — скидання з нуля.
+  const legacy = key => { try { return JSON.parse(localStorage.getItem(LEGACY[key])); } catch { return null; } };
+  const ready = FP.store.ready.then(() => {
+    const stored = k => FP.store.get('state', k) || legacy(k);
+    data = { ...(stored('singles') || {}), ...data };
+    const sa = stored('accas');
+    if (sa) accas = { slots: { ...sa.slots, ...accas.slots }, archive: [...(sa.archive || []), ...accas.archive] };
+    live = { ...(stored('live') || {}), ...live };
+    const version = FP.store.get('state', 'version') || (() => { try { return localStorage.getItem(LEGACY.version); } catch { return null; } })();
+    if (version !== FP.STATS_VERSION) clear();
+    FP.store.put('state', 'version', FP.STATS_VERSION);
+    saveSingles(); saveAccas(); saveLive();
+    try { Object.values(LEGACY).forEach(k => localStorage.removeItem(k)); } catch {}
+  });
 
-  return { record, recordLive, allLive, all, activeAccas, archivedAccas, setActive, retire, clear };
+  return { ready, record, recordLive, allLive, all, activeAccas, archivedAccas, setActive, retire, clear };
 })();

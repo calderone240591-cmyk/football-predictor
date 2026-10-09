@@ -17,35 +17,21 @@ FP.api = (() => {
   const TTL_LINEUPS_EMPTY = 5 * MIN;
   const TTL_LINEUPS_READY = 12 * 60 * MIN;
 
-  // Прибираємо дані попередньої версії (API-Football), щоб не займали місце.
+  // ---------- кеш ----------
+  // Дані 25 чемпіонатів (з минулими сезонами) займають кілька мегабайт — більше, ніж дозволяє
+  // localStorage на iPhone (≈ 5 МБ), тож кеш живе в IndexedDB (FP.store, таблиця kv).
+
+  // Прибираємо старий кеш із localStorage (попередні версії), щоб звільнити місце.
   try {
     Object.keys(localStorage)
-      .filter(k => k.startsWith('fpc:') || k === 'fp_key' || k === 'fp_req')
+      .filter(k => k.startsWith(CACHE_PREFIX) || k.startsWith('fpc:') || k === 'fp_key' || k === 'fp_req')
       .forEach(k => localStorage.removeItem(k));
   } catch {}
 
-  function cacheEntry(k) {
-    try {
-      const raw = localStorage.getItem(CACHE_PREFIX + k);
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
-  }
-
-  function cacheSet(k, data) {
-    const value = JSON.stringify({ t: Date.now(), data });
-    try {
-      localStorage.setItem(CACHE_PREFIX + k, value);
-    } catch {
-      clearCache();
-      try { localStorage.setItem(CACHE_PREFIX + k, value); } catch {}
-    }
-  }
-
-  function clearCache() {
-    try {
-      Object.keys(localStorage).filter(k => k.startsWith(CACHE_PREFIX)).forEach(k => localStorage.removeItem(k));
-    } catch {}
-  }
+  const ready = FP.store.ready;
+  const cacheEntry = k => FP.store.get('kv', k) || null;
+  const cacheSet = (k, data) => FP.store.put('kv', k, { t: Date.now(), data });
+  const clearCache = () => FP.store.clear('kv');
 
   async function getJson(url) {
     let res;
@@ -60,6 +46,7 @@ FP.api = (() => {
 
   // Якщо мережа недоступна, віддаємо застарілий кеш, ніж нічого.
   async function cached(k, ttl, url, transform, force) {
+    await ready;
     const e = cacheEntry(k);
     if (!force && e && Date.now() - e.t < ttl) return e.data;
     try {
@@ -240,6 +227,7 @@ FP.api = (() => {
 
   async function lineups(slug, eventId) {
     const k = `ln:${eventId}`;
+    await ready;
     const e = cacheEntry(k);
     if (e && Date.now() - e.t < (e.data.length ? TTL_LINEUPS_READY : TTL_LINEUPS_EMPTY)) return e.data;
     return cached(k, 0, `${SITE}${slug}/summary?event=${eventId}`, slimSummary, true);

@@ -997,6 +997,8 @@
     const items = days.flatMap(d => d.items).filter(x => isUpcoming(x.ev) && x.ev.ts * 1000 > Date.now() + 5 * MIN);
 
     // Моделі (а з ними й результати сезону) — для майбутніх матчів і для подій активних експресів.
+    await FP.history.ready;
+    if (rid !== renderId) return;
     let active = FP.history.activeAccas();
     const slugs = [...new Set([...items.map(x => x.slug), ...Object.values(active).flatMap(a => a.legs.map(l => l.slug))])]
       .filter(s => LEAGUE_BY_SLUG.has(s));
@@ -1214,6 +1216,8 @@
     const rid = ++renderId;
     setHeader('Статистика');
     $view.innerHTML = '<div class="loading">Перевірка результатів…</div>';
+    await FP.history.ready;
+    if (rid !== renderId) return;
 
     const singles = FP.history.all();
     const accas = [...FP.history.archivedAccas(), ...Object.values(FP.history.activeAccas())];
