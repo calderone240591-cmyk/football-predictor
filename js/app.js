@@ -305,14 +305,18 @@
     return `<div class="summary">Влучність основних прогнозів у завершених матчах: <b>${hits} з ${done.length}</b></div>`;
   }
 
+  // Усі цінні ставки дня (ще не почались): перші 5 видно одразу, решта — під «Показати всі».
   function valueCard(values) {
     if (!values.length) return '';
+    const row = x => `<a class="acca-row" href="#/match/${x.slug}/${x.ev.id}">
+      <span><small>${esc(timeOf(x.ev.ts))}</small> ${esc(x.ev.home.short || x.ev.home.name)} — ${esc(x.ev.away.short || x.ev.away.name)}</span>
+      <b>${esc(x.pred.value.short)} @ ${x.pred.value.odds.toFixed(2)} · +${(x.pred.value.edge * 100).toFixed(0)}%</b></a>`;
     return `
       <section class="card acca">
-        <div class="acca-head"><b>Цінні ставки ${help('value')}</b><span>ймовірність вища, ніж закладено в коефіцієнт</span></div>
-        ${values.slice(0, 5).map(x => `<a class="acca-row" href="#/match/${x.slug}/${x.ev.id}">
-          <span>${esc(x.ev.home.short || x.ev.home.name)} — ${esc(x.ev.away.short || x.ev.away.name)}</span>
-          <b>${esc(x.pred.value.short)} @ ${x.pred.value.odds.toFixed(2)} · +${(x.pred.value.edge * 100).toFixed(0)}%</b></a>`).join('')}
+        <div class="acca-head"><b>Цінні ставки · ${values.length} ${help('value')}</b><span>ймовірність вища, ніж закладено в коефіцієнт</span></div>
+        ${values.slice(0, 5).map(row).join('')}
+        ${values.length > 5 ? `<details class="more"><summary>Показати всі (${values.length})</summary>${values.slice(5).map(row).join('')}</details>` : ''}
+        <p class="hint">Тут — матчі, що ще не почались. У статистиці «очікують результату» також ті, що вже йдуть.</p>
       </section>`;
   }
 
@@ -1455,7 +1459,19 @@
       <section class="card"><h3>За коефіцієнтом</h3>${byOdds}</section>
       <section class="card"><h3>За ринком</h3><table class="markets"><thead><tr><th>Ринок</th><th>Зіграло</th><th>Прибуток, од.</th></tr></thead><tbody>${byMarket}</tbody></table></section>
       <section class="card"><h3>За чемпіонатами</h3>${statTable('Чемпіонат', groupBy(done.map(r => ({ ...r.v, slug: r.slug })), x => leagueLabel(x.slug)), x => x.odds)}</section>` : ''}
-      ${days ? `<section class="card"><h3>По днях</h3>${days}</section>` : '<div class="empty">За цей період цінних ставок ще немає.<br>Вони з\'являються, коли кф DraftKings вищий, ніж має бути за прогнозом.</div>'}`;
+      ${(() => {
+        const wait = rows.filter(r => r.v.st.s === 'pending' || r.v.st.s === 'live').sort((a, b) => a.ts - b.ts);
+        return wait.length ? `<section class="card"><h3>Очікують результату · ${wait.length}</h3>${wait.map(r => `
+          <a class="hrow" href="#/match/${r.slug}/${r.id}">
+            <div class="hrow-main">
+              <small>${esc(dateOf(r.ts))} ${esc(timeOf(r.ts))} · ${esc(leagueLabel(r.slug))}</small>
+              <span>${esc(r.home)} — ${esc(r.away)}</span>
+              <em>${esc(r.v.short)} @ ${r.v.odds.toFixed(2)} · перевага +${(r.v.edge * 100).toFixed(1)}%</em>
+            </div>
+            <div class="hrow-st">${r.v.st.s === 'live' ? '<span class="live">LIVE</span>' : ''}</div>
+          </a>`).join('')}</section>` : '';
+      })()}
+      ${days ? `<section class="card"><h3>По днях</h3>${days}</section>` : (rows.length ? '' : '<div class="empty">За цей період цінних ставок ще немає.<br>Вони з\'являються, коли кф DraftKings вищий, ніж має бути за прогнозом.</div>')}`;
   }
 
   // ---------- Лайв (окрема статистика, у віртуальний рахунок не йде) ----------
