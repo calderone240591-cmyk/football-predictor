@@ -391,7 +391,7 @@
     }
     pairs.sort((x, y) => y.edge - x.edge);
     const name = x => `${esc(x.ev.home.short || x.ev.home.name)} — ${esc(x.ev.away.short || x.ev.away.name)}`;
-    return `
+    return scenarioCard(vs, pairs.length) + `
       <section class="card">
         <h3>Двійники з обраних · ${pairs.length}</h3>
         <p class="hint top">Обрано ${n} цінних ставок → ${n} × ${n - 1} / 2 = <b>${pairs.length}</b> пар. Відсортовано за перевагою. Кф — добуток кф DraftKings, ймовірність — шанс, що зіграють обидві.</p>
@@ -408,6 +408,64 @@
             </tr>`).join('')}
           </tbody>
         </table>
+      </section>`;
+  }
+
+  // Сценарії для двійників з обраних: на кожну пару — 50 грн. Якщо зіграло k з n матчів,
+  // заходить k × (k − 1) / 2 пар. Повернення залежить від того, ЯКІ саме матчі зіграли, тому
+  // показуємо середнє (усі варіанти однаково ймовірні) і діапазон: гірший випадок — зіграли k матчів
+  // з найменшими кф, кращий — з найбільшими. Ймовірність k — за нашими ймовірностями (матчі незалежні).
+  const DOUBLE_STAKE = 50;
+  function scenarioCard(vs, pairCount) {
+    const n = vs.length;
+    const odds = vs.map(x => x.v.odds).sort((a, b) => a - b);
+    // Сума добутків кф усіх пар зі списку: ((Σo)² − Σo²) / 2.
+    const pairSum = list => {
+      const s = list.reduce((t, o) => t + o, 0), q = list.reduce((t, o) => t + o * o, 0);
+      return (s * s - q) / 2;
+    };
+    const total = pairSum(odds);
+    // Ймовірність, що зіграє рівно k матчів (біноміальний розподіл з різними ймовірностями).
+    let dist = [1];
+    for (const x of vs) {
+      const p = x.v.p, next = new Array(dist.length + 1).fill(0);
+      dist.forEach((v, k) => { next[k] += v * (1 - p); next[k + 1] += v * p; });
+      dist = next;
+    }
+    const stake = pairCount * DOUBLE_STAKE;
+    const rows = [];
+    for (let k = 0; k <= n; k++) {
+      const wins = k * (k - 1) / 2;
+      const avgRet = n > 1 ? total * (k * (k - 1)) / (n * (n - 1)) * DOUBLE_STAKE : 0;
+      const worst = pairSum(odds.slice(0, k)) * DOUBLE_STAKE, best = pairSum(odds.slice(n - k)) * DOUBLE_STAKE;
+      rows.push({ k, wins, avg: avgRet - stake, worst: worst - stake, best: best - stake, prob: dist[k] });
+    }
+    const even = rows.find(r => r.avg >= 0);
+    const evenWorst = rows.find(r => r.worst >= 0);
+    const expected = rows.reduce((s, r) => s + r.prob * r.avg, 0);
+    const pPlus = rows.filter(r => r.avg >= 0).reduce((s, r) => s + r.prob, 0);
+    const signed = v => `${v >= 0 ? '+' : '−'}${Math.abs(Math.round(v)).toLocaleString('uk-UA')}`;
+    return `
+      <section class="card">
+        <h3>Скільки має зіграти · ставка ${DOUBLE_STAKE} грн на кожен двійник</h3>
+        <div class="kpis">
+          <div><b>${money(stake)}</b><span>поставлено<br>${pairCount} × ${DOUBLE_STAKE} грн</span></div>
+          <div><b>${even ? `${even.k} з ${n}` : '—'}</b><span>вихід у плюс<br>у середньому${evenWorst ? `, гарантовано з ${evenWorst.k}` : ''}</span></div>
+          <div><b class="${expected >= 0 ? 'ok' : 'bad'}">${signed(expected)} грн</b><span>очікуваний результат<br>шанс на плюс ${pct(pPlus)}</span></div>
+        </div>
+        <table class="markets scen">
+          <thead><tr><th>Зіграло</th><th>Двійн.</th><th>Прибуток, грн<br><small>середній · діапазон</small></th><th>ROI</th><th>Шанс</th></tr></thead>
+          <tbody>${rows.map(r => `
+            <tr class="${r.avg >= 0 ? 'plus' : 'minus'} ${even && r.k === even.k ? 'even' : ''}">
+              <td><b>${r.k}</b> з ${n}</td>
+              <td>${r.wins} з ${pairCount}</td>
+              <td><b class="${r.avg >= 0 ? 'ok' : 'bad'}">${signed(r.avg)}</b><br><small>${r.k >= 2 && r.k < n ? `${signed(r.worst)} … ${signed(r.best)}` : ''}</small></td>
+              <td class="${r.avg >= 0 ? 'ok' : 'bad'}">${(r.avg / stake * 100).toFixed(0)}%</td>
+              <td>${r.prob >= 0.005 ? pct(r.prob) : '<1%'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        <p class="hint">Прибуток залежить від того, які саме матчі зіграють: «діапазон» — від гіршого випадку (зіграли ставки з найменшими кф) до кращого (з найбільшими). «Шанс» — наскільки ймовірно, що зіграє саме стільки матчів, за прогнозом додатка. Кф — DraftKings; у вашого букмекера можуть бути інші.</p>
       </section>`;
   }
 

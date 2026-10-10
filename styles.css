@@ -449,6 +449,12 @@ a.acca-row { color: inherit; text-decoration: none; }
 .vsel-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 10px; font-size: 13px; }
 .vsel-bar span { flex: 1; color: var(--muted); }
 .small-btn { padding: 6px 10px; font-size: 12px; }
+.scen { margin-top: 12px; }
+.scen td, .scen th { text-align: center; font-size: 12.5px; vertical-align: middle; }
+.scen th small, .scen td small { font-size: 10.5px; color: var(--muted); font-weight: 400; }
+.scen tr.plus td:first-child { box-shadow: inset 3px 0 0 var(--hi); }
+.scen tr.minus td:first-child { box-shadow: inset 3px 0 0 var(--lo); }
+.scen tr.even td { background: color-mix(in srgb, var(--hi) 10%, transparent); }
 .doubles td { vertical-align: middle; font-size: 12.5px; }
 .doubles td:nth-child(2) { line-height: 1.5; }
 .doubles a { color: inherit; text-decoration: none; }
