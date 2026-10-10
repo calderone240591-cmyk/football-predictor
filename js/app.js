@@ -219,6 +219,7 @@
 
   // silent — фонове автооновлення: без індикатора і без помилок на весь екран.
   async function loadHome(rid, force, silent) {
+    await FP.history.ready;   // щоб для матчів, що почались, одразу показати зафіксований прогноз
     const { items, errors } = await loadDay(state.dayOffset, force);
     if (rid !== renderId) return;
     if (!items.length && errors === LEAGUES.length) {
@@ -291,15 +292,32 @@
 
     // Один список за часом початку; турнір видно на кожній картці. Цінні ставки дня — вгорі.
     items.sort((a, b) => a.ev.ts - b.ev.ts);
-    $list.innerHTML = summary(items) + valueCard(items)
+    $list.innerHTML = summary(items) + valueCard(items) + doublesCard(items)
       + `<div class="group">${items.map(x => matchCard(x, true)).join('')}</div>`;
   }
 
   // Перевірка моделі на вже зіграних сьогодні матчах.
+  // Прогноз, який показуємо на картці. Поки матч не почався — поточний (він оновлюється разом
+  // із коефіцієнтами й складами). Коли почався — зафіксований до старту, той самий, що в статистиці,
+  // щоб рекомендація не «перестрибувала» під час гри.
+  function shownPrediction(ev, pred) {
+    const started = !isUpcoming(ev) || ev.ts * 1000 <= Date.now();
+    const e = started ? FP.history.get(ev.id) : null;
+    if (e) {
+      return {
+        frozen: true,
+        tip: { key: e.tip.key, short: e.tip.short, long: e.tip.short, p: e.tip.p, conf: { level: e.tip.level } },
+        prob: e.probs ? { '1': e.probs.p1, X: e.probs.px, '2': e.probs.p2 } : pred && pred.prob,
+        value: e.value,
+      };
+    }
+    return pred ? { frozen: false, tip: pred.tip, prob: pred.prob, value: pred.value } : pred;
+  }
+
   function summary(items) {
-    const done = items.filter(x => x.pred && isFinished(x.ev));
+    const done = items.filter(x => isFinished(x.ev)).map(x => shownPrediction(x.ev, x.pred) && { ...x, sp: shownPrediction(x.ev, x.pred) }).filter(Boolean);
     if (!done.length) return '';
-    const hits = done.filter(x => x.pred.tip.hit(x.ev.home.score, x.ev.away.score)).length;
+    const hits = done.filter(x => model.settle(x.sp.tip.key, x.ev.home.score, x.ev.away.score) === true).length;
     return `<div class="summary">Влучність основних прогнозів у завершених матчах: <b>${hits} з ${done.length}</b></div>`;
   }
 
@@ -331,26 +349,63 @@
   }
 
 
+  // Двійники з цінних ставок дня: кожна з кожною — n × (n − 1) / 2 пар. Лише матчі, що ще не почались.
+  // Кф пари — добуток кф DraftKings, ймовірність — добуток ймовірностей (матчі незалежні).
+  function doublesCard(items) {
+    const vs = items.filter(x => isUpcoming(x.ev) && x.ev.ts * 1000 > Date.now() && x.pred && x.pred.value)
+      .map(x => ({ ...x, v: x.pred.value }));
+    const n = vs.length;
+    if (n < 2) return '';
+    const pairs = [];
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const a = vs[i], b = vs[j];
+      const odds = a.v.odds * b.v.odds, p = a.v.p * b.v.p;
+      pairs.push({ a, b, odds, p, edge: p * odds - 1 });
+    }
+    pairs.sort((x, y) => y.edge - x.edge);
+    const name = x => `${esc(x.ev.home.short || x.ev.home.name)} — ${esc(x.ev.away.short || x.ev.away.name)}`;
+    return `
+      <section class="card">
+        <h3>Двійники з цінних ставок · ${pairs.length}</h3>
+        <p class="hint top">${n} цінних ставок → ${n} × ${n - 1} / 2 = <b>${pairs.length}</b> пар. Відсортовано за перевагою. Кф — добуток кф DraftKings, ймовірність — шанс, що зіграють обидві.</p>
+        <table class="markets doubles">
+          <thead><tr><th>#</th><th>Пара</th><th>Кф</th><th>Ймов.</th><th>Перев.</th></tr></thead>
+          <tbody>${pairs.map((d, i) => `
+            <tr>
+              <td>${i + 1}</td>
+              <td><a href="#/match/${d.a.slug}/${d.a.ev.id}">${name(d.a)}</a> <b>${esc(d.a.v.short)}</b><br>
+                  <a href="#/match/${d.b.slug}/${d.b.ev.id}">${name(d.b)}</a> <b>${esc(d.b.v.short)}</b></td>
+              <td><b>${d.odds.toFixed(2)}</b></td>
+              <td>${pct(d.p)}</td>
+              <td class="ok">+${(d.edge * 100).toFixed(0)}%</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </section>`;
+  }
+
   function matchCard({ slug, ev, pred }, showLeague) {
     const showScore = ev.state !== 'pre';
+    const sp = shownPrediction(ev, pred);
     let predHtml;
-    if (pred === undefined) predHtml = '<div class="pred-loading">аналіз…</div>';
-    else if (!pred) predHtml = '<div class="pred-loading">недостатньо даних</div>';
+    if (sp === undefined) predHtml = '<div class="pred-loading">аналіз…</div>';
+    else if (!sp || !sp.prob) predHtml = '<div class="pred-loading">недостатньо даних</div>';
     else {
-      const p = pred.prob;
-      const verdict = isFinished(ev) ? (pred.tip.hit(ev.home.score, ev.away.score) ? '<i class="ok">✓</i>' : '<i class="bad">✗</i>') : '';
+      const p = sp.prob;
+      const r = isFinished(ev) ? model.settle(sp.tip.key, ev.home.score, ev.away.score) : undefined;
+      const verdict = r === true ? '<i class="ok">✓</i>' : r === false ? '<i class="bad">✗</i>' : r === null ? '↺ ' : '';
       predHtml = `
         <div class="bar" aria-label="Ймовірності: П1 ${pct(p['1'])}, нічия ${pct(p.X)}, П2 ${pct(p['2'])}">
           <span class="b1" style="flex:${p['1']}">${pct(p['1'])}</span>
           <span class="bx" style="flex:${p.X}">${pct(p.X)}</span>
           <span class="b2" style="flex:${p['2']}">${pct(p['2'])}</span>
         </div>
-        <div class="tip ${confClass(pred.tip.conf)}">${verdict}${esc(pred.tip.short)} · ${pct(pred.tip.p)}</div>`;
+        <div class="tip ${confClass(sp.tip.conf)}">${verdict}${esc(sp.tip.short)} · ${pct(sp.tip.p)}</div>`;
     }
     const l = LEAGUE_BY_SLUG.get(slug);
     const badges = isFinished(ev) ? '' : [
       (state.lineups.get(ev.id) || []).length ? '<span class="badge ok-b">склади</span>' : '',
-      pred && pred.value ? '<span class="badge val-b">цінність</span>' : '',
+      sp && sp.value ? '<span class="badge val-b">цінність</span>' : '',
     ].join('');
     return `
       <a class="match" href="#/match/${slug}/${ev.id}">
@@ -513,18 +568,21 @@
   // Матч почався: передматчеві рекомендації вже неактуальні (вони записані в статистику до старту).
   // Після матчу показуємо, чи зіграла рекомендація.
   function startedCard(ev, pred) {
+    const sp = shownPrediction(ev, pred);
+    const tip = sp.tip;
     if (isFinished(ev)) {
-      const r = model.settle(pred.tip.key, ev.home.score, ev.away.score);
+      const r = model.settle(tip.key, ev.home.score, ev.away.score);
       return `
         <section class="card tipcard ${r ? 'hi' : 'lo'}">
           <div class="tip-label">Рекомендація до матчу</div>
-          <div class="tip-main">${esc(pred.tip.long)} ${r === true ? '<i class="ok">✓ зіграла</i>' : r === false ? '<i class="bad">✗ не зіграла</i>' : '↺'}</div>
-          <p class="hint">Ймовірність до матчу ${pct(pred.tip.p)}. Результат враховано у вкладці «Статистика».</p>
+          <div class="tip-main">${esc(tip.long)} ${r === true ? '<i class="ok">✓ зіграла</i>' : r === false ? '<i class="bad">✗ не зіграла</i>' : '↺'}</div>
+          <p class="hint">Ймовірність до матчу ${pct(tip.p)}. ${sp.frozen ? 'Результат враховано у вкладці «Статистика».' : 'Цей матч почався до старту обліку, тож у статистику не входить.'}</p>
         </section>`;
     }
     return `
       <section class="card notice-card">
         <div class="tip-label">Матч іде</div>
+        ${sp.frozen ? `<p>Рекомендація, зафіксована до старту: <b>${esc(tip.short)}</b> (${pct(tip.p)}).</p>` : ''}
         <p>Передматчеві рекомендації вже неактуальні: вони були зафіксовані до початку матчу і враховуються у статистиці.</p>
         <p class="hint">Аналіз для ставок під час гри — у розділі <a href="#/live">«Лайв»</a>: у перерві і до ${LIVE_UNTIL_MINUTE}-ї хвилини.</p>
       </section>`;

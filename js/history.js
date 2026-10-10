@@ -46,6 +46,8 @@ FP.history = (() => {
       home: ev.home.short || ev.home.name, away: ev.away.short || ev.away.name,
       tip: { key: pred.tip.key, short: pred.tip.short, p: r3(pred.tip.p), level: pred.tip.conf.level, odds: pred.tip.odds || null },
       value: pred.value ? { key: pred.value.key, short: pred.value.short, p: r3(pred.value.p), odds: pred.value.odds } : null,
+      // Ймовірності 1X2 на момент старту — щоб картка матчу, що почався, не перераховувалась.
+      probs: { p1: r3(pred.prob['1']), px: r3(pred.prob.X), p2: r3(pred.prob['2']) },
       // Найкращі варіанти по групах ринків.
       picks: pred.groups.filter(g => g.pick).map(g => ({ group: g.name, key: g.pick.key, short: g.pick.short, p: r3(g.pick.p) })),
     };
@@ -65,6 +67,7 @@ FP.history = (() => {
   }
 
   const all = () => Object.entries(data).map(([id, x]) => ({ id, ...x }));
+  const get = id => data[id] || null;
 
   // ---------- лайв-рекомендації (у перерві) ----------
   // Фіксуємо всі рекомендації, видані в перерві (останній варіант перед 2-м таймом),
@@ -130,5 +133,5 @@ FP.history = (() => {
     try { Object.values(LEGACY).forEach(k => localStorage.removeItem(k)); } catch {}
   });
 
-  return { ready, record, recordLive, allLive, all, activeAccas, archivedAccas, setActive, retire, clear };
+  return { ready, record, recordLive, allLive, all, get, activeAccas, archivedAccas, setActive, retire, clear };
 })();
