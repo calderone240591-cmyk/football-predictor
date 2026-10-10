@@ -278,7 +278,9 @@
   function renderList() {
     const $list = document.getElementById('list');
     if (!$list) return;
+    // Матчі, що почались до старту обліку статистики, не показуємо — вони в статистику не йдуть.
     const items = state.day
+      .filter(x => x.ev.ts >= FP.STATS_FROM)
       .filter(x => state.league === 'all' || x.slug === state.league)
       .map(x => ({ ...x, pred: predictionFor(x.slug, x.ev) }));
 
