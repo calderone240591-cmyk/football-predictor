@@ -17,7 +17,15 @@
     teamStats: new Map(),      // id команди → сезонна статистика (xG, кутові, картки)
     facts: new Map(),          // id матчу → рахунок 1-го тайму, кутові, картки (для розрахунку ставок)
     updatedAt: 0,
+    valueSel: loadValueSel(),  // id матчів, обраних для таблиці двійників (зберігається на телефоні)
   };
+
+  function loadValueSel() {
+    try { return new Set(JSON.parse(localStorage.getItem('fp_value_sel') || '[]')); } catch { return new Set(); }
+  }
+  function saveValueSel() {
+    try { localStorage.setItem('fp_value_sel', JSON.stringify([...state.valueSel])); } catch {}
+  }
   let renderId = 0;
 
   const MIN = 60 * 1000;
@@ -331,6 +339,9 @@
       return e && e.value ? { ...x, v: { ...e.value, edge: e.value.p * e.value.odds - 1 } } : null;
     }).filter(Boolean).sort((a, b) => a.ev.ts - b.ev.ts);
     if (!values.length) return '';
+    const canPick = x => isUpcoming(x.ev) && x.ev.ts * 1000 > Date.now();
+    const pickable = values.filter(canPick);
+    state.valuePickable = pickable.map(x => x.ev.id);
     const status = x => {
       if (isLive(x.ev)) return '<span class="live">LIVE</span>';
       if (isFinished(x.ev)) {
@@ -342,20 +353,36 @@
     return `
       <section class="card acca">
         <div class="acca-head"><b>Цінні ставки дня · ${values.length} ${help('value')}</b><span>ймовірність вища, ніж закладено в коефіцієнт</span></div>
-        ${values.map(x => `<a class="acca-row" href="#/match/${x.slug}/${x.ev.id}">
-          <span><small>${status(x)}</small> ${esc(x.ev.home.short || x.ev.home.name)} — ${esc(x.ev.away.short || x.ev.away.name)}</span>
-          <b>${esc(x.v.short)} @ ${x.v.odds.toFixed(2)} · +${(x.v.edge * 100).toFixed(0)}%</b></a>`).join('')}
+        ${values.map(x => {
+          const on = state.valueSel.has(x.ev.id);
+          return `<div class="acca-row vrow ${on ? 'sel' : ''}">
+            <a href="#/match/${x.slug}/${x.ev.id}">
+              <span><small>${status(x)}</small> ${esc(x.ev.home.short || x.ev.home.name)} — ${esc(x.ev.away.short || x.ev.away.name)}</span>
+              <b>${esc(x.v.short)} @ ${x.v.odds.toFixed(2)} · +${(x.v.edge * 100).toFixed(0)}%</b>
+            </a>
+            ${canPick(x) ? `<button class="add ${on ? 'on' : ''}" data-vsel="${esc(x.ev.id)}" aria-label="Обрати для двійників">${on ? '✓' : '+'}</button>` : '<span class="add-stub"></span>'}
+          </div>`;
+        }).join('')}
+        ${pickable.length >= 2 ? `<div class="vsel-bar">
+          <span>Обрано для двійників: <b>${pickable.filter(x => state.valueSel.has(x.ev.id)).length}</b> з ${pickable.length}</span>
+          <button class="btn ghost small-btn" data-vsel-all="1">Обрати всі</button>
+          <button class="btn ghost small-btn" data-vsel-none="1">Очистити</button>
+        </div>` : ''}
       </section>`;
   }
 
 
-  // Двійники з цінних ставок дня: кожна з кожною — n × (n − 1) / 2 пар. Лише матчі, що ще не почались.
+  // Двійники з обраних цінних ставок: кожна з кожною — n × (n − 1) / 2 пар. Лише матчі, що ще не почались.
   // Кф пари — добуток кф DraftKings, ймовірність — добуток ймовірностей (матчі незалежні).
   function doublesCard(items) {
-    const vs = items.filter(x => isUpcoming(x.ev) && x.ev.ts * 1000 > Date.now() && x.pred && x.pred.value)
-      .map(x => ({ ...x, v: x.pred.value }));
+    const all = items.filter(x => isUpcoming(x.ev) && x.ev.ts * 1000 > Date.now() && x.pred && x.pred.value);
+    if (all.length < 2) return '';
+    const vs = all.filter(x => state.valueSel.has(x.ev.id)).map(x => ({ ...x, v: x.pred.value }));
     const n = vs.length;
-    if (n < 2) return '';
+    if (n < 2) {
+      return `<section class="card"><h3>Двійники з цінних ставок</h3>
+        <p class="hint top">Оберіть щонайменше 2 цінні ставки кнопкою <b>+</b> у картці вище — тут з'явиться таблиця всіх двійників з обраних і їх кількість (n × (n − 1) / 2). ${n === 1 ? 'Зараз обрано 1.' : ''}</p></section>`;
+    }
     const pairs = [];
     for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
       const a = vs[i], b = vs[j];
@@ -366,8 +393,8 @@
     const name = x => `${esc(x.ev.home.short || x.ev.home.name)} — ${esc(x.ev.away.short || x.ev.away.name)}`;
     return `
       <section class="card">
-        <h3>Двійники з цінних ставок · ${pairs.length}</h3>
-        <p class="hint top">${n} цінних ставок → ${n} × ${n - 1} / 2 = <b>${pairs.length}</b> пар. Відсортовано за перевагою. Кф — добуток кф DraftKings, ймовірність — шанс, що зіграють обидві.</p>
+        <h3>Двійники з обраних · ${pairs.length}</h3>
+        <p class="hint top">Обрано ${n} цінних ставок → ${n} × ${n - 1} / 2 = <b>${pairs.length}</b> пар. Відсортовано за перевагою. Кф — добуток кф DraftKings, ймовірність — шанс, що зіграють обидві.</p>
         <table class="markets doubles">
           <thead><tr><th>#</th><th>Пара</th><th>Кф</th><th>Ймов.</th><th>Перев.</th></tr></thead>
           <tbody>${pairs.map((d, i) => `
@@ -2132,7 +2159,21 @@
   $view.addEventListener('click', e => {
     const b = e.target.closest('button');
     if (!b) return;
-    if (b.dataset.add) {
+    if (b.dataset.vsel) {
+      // Вибір цінних ставок для таблиці двійників.
+      const id = b.dataset.vsel;
+      if (state.valueSel.has(id)) state.valueSel.delete(id); else state.valueSel.add(id);
+      saveValueSel();
+      renderList();
+    } else if (b.dataset.vselAll) {
+      (state.valuePickable || []).forEach(id => state.valueSel.add(id));
+      saveValueSel();
+      renderList();
+    } else if (b.dataset.vselNone) {
+      state.valueSel.clear();
+      saveValueSel();
+      renderList();
+    } else if (b.dataset.add) {
       addFromMatch(b.dataset.add);
     } else if (b.dataset.day) {
       state.dayOffset = Number(b.dataset.day);
