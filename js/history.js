@@ -2,13 +2,14 @@
 // за фінальним рахунком — так видно реальну влучність і прибутковість, а не теоретичну.
 // Зберігається в IndexedDB (FP.store, таблиця state) окремо від кешу, тому «Завантажити дані
 // наново» його не стирає. Записи за 25 чемпіонатами швидко переросли б ліміт localStorage.
-// Лайв-рекомендації в журнал не пишуться.
+// Лайв-рекомендації ведуться окремо (live) і у віртуальний рахунок не йдуть.
 FP.history = (() => {
   const KEEP_DAYS = 120;
   const LEGACY = { singles: 'fp_history', accas: 'fp_accas', live: 'fp_live', version: 'fp_stats_version' };
   // До завантаження зі сховища записи накопичуються тут і потім об'єднуються з ним.
   let data = {};
   let accas = { slots: {}, archive: [] };
+  let live = {};
   const timers = {};
 
   function save(key, get) {
@@ -28,6 +29,12 @@ FP.history = (() => {
     const c = cutoff();
     accas.archive = accas.archive.filter(a => a.createdAt / 1000 > c);
     save('accas', () => accas);
+  }
+
+  function saveLive() {
+    const c = cutoff();
+    for (const id of Object.keys(live)) if (live[id].ts < c) delete live[id];
+    save('live', () => live);
   }
 
   // ---------- одиночні ----------
@@ -59,6 +66,20 @@ FP.history = (() => {
 
   const all = () => Object.entries(data).map(([id, x]) => ({ id, ...x }));
 
+  // ---------- лайв-рекомендації (у перерві) ----------
+  // Фіксуємо всі рекомендації, видані в перерві (останній варіант перед 2-м таймом),
+  // разом із тоталом 1.5, якщо перший тайм закінчився 0:0.
+  function recordLive(slug, ev, ht, recs) {
+    if (!counts(ev)) return;
+    live[ev.id] = {
+      slug, ts: ev.ts, home: ev.home.short || ev.home.name, away: ev.away.short || ev.away.name, ht,
+      picks: recs.map(m => ({ key: m.key, group: m.group, short: m.short, p: r3(m.p), k: r3(1 / m.p), zero: !!m.zero })),
+    };
+    saveLive();
+  }
+
+  const allLive = () => Object.entries(live).map(([id, x]) => ({ id, ...x }));
+
   // ---------- готові експреси ----------
   // slots: активний експрес у кожному слоті; archive: замінені експреси (для статистики).
   const activeAccas = () => ({ ...accas.slots });
@@ -79,8 +100,10 @@ FP.history = (() => {
   function clear() {
     data = {};
     accas = { slots: {}, archive: [] };
+    live = {};
     FP.store.put('state', 'singles', data);
     FP.store.put('state', 'accas', accas);
+    FP.store.put('state', 'live', live);
   }
 
   // ---------- завантаження ----------
@@ -92,19 +115,20 @@ FP.history = (() => {
     // щоб не втратити збережену статистику. Наступний запуск прочитає її як звичайно.
     if (!FP.store.isLoaded()) {
       data = { ...(legacy('singles') || {}), ...data };
+      live = { ...(legacy('live') || {}), ...live };
       return;
     }
     const stored = k => FP.store.get('state', k) || legacy(k);
     data = { ...(stored('singles') || {}), ...data };
     const sa = stored('accas');
     if (sa) accas = { slots: { ...sa.slots, ...accas.slots }, archive: [...(sa.archive || []), ...accas.archive] };
+    live = { ...(stored('live') || {}), ...live };
     const version = FP.store.get('state', 'version') || (() => { try { return localStorage.getItem(LEGACY.version); } catch { return null; } })();
     if (version !== FP.STATS_VERSION) clear();
     FP.store.put('state', 'version', FP.STATS_VERSION);
-    FP.store.put('state', 'live', {});   // лайв більше не ведеться — звільняємо місце
-    saveSingles(); saveAccas();
+    saveSingles(); saveAccas(); saveLive();
     try { Object.values(LEGACY).forEach(k => localStorage.removeItem(k)); } catch {}
   });
 
-  return { ready, record, all, activeAccas, archivedAccas, setActive, retire, clear };
+  return { ready, record, recordLive, allLive, all, activeAccas, archivedAccas, setActive, retire, clear };
 })();
