@@ -291,9 +291,7 @@
 
     // Один список за часом початку; турнір видно на кожній картці. Цінні ставки дня — вгорі.
     items.sort((a, b) => a.ev.ts - b.ev.ts);
-    const values = items.filter(x => x.pred && x.pred.value && isUpcoming(x.ev))
-      .sort((a, b) => b.pred.value.edge - a.pred.value.edge);
-    $list.innerHTML = summary(items) + valueCard(values)
+    $list.innerHTML = summary(items) + valueCard(items)
       + `<div class="group">${items.map(x => matchCard(x, true)).join('')}</div>`;
   }
 
@@ -305,18 +303,30 @@
     return `<div class="summary">Влучність основних прогнозів у завершених матчах: <b>${hits} з ${done.length}</b></div>`;
   }
 
-  // Усі цінні ставки дня (ще не почались): перші 5 видно одразу, решта — під «Показати всі».
-  function valueCard(values) {
+  // Усі цінні ставки ігрового дня повністю, за часом: майбутні — з часом початку, ті, що йдуть, — LIVE,
+  // завершені — з рахунком і ✓/✗. Для матчів, що почались, — ставка, зафіксована до старту (як у статистиці).
+  function valueCard(items) {
+    const saved = new Map(FP.history.all().map(e => [e.id, e]));
+    const values = items.map(x => {
+      if (isUpcoming(x.ev)) return x.pred && x.pred.value ? { ...x, v: x.pred.value } : null;
+      const e = saved.get(x.ev.id);
+      return e && e.value ? { ...x, v: { ...e.value, edge: e.value.p * e.value.odds - 1 } } : null;
+    }).filter(Boolean).sort((a, b) => a.ev.ts - b.ev.ts);
     if (!values.length) return '';
-    const row = x => `<a class="acca-row" href="#/match/${x.slug}/${x.ev.id}">
-      <span><small>${esc(timeOf(x.ev.ts))}</small> ${esc(x.ev.home.short || x.ev.home.name)} — ${esc(x.ev.away.short || x.ev.away.name)}</span>
-      <b>${esc(x.pred.value.short)} @ ${x.pred.value.odds.toFixed(2)} · +${(x.pred.value.edge * 100).toFixed(0)}%</b></a>`;
+    const status = x => {
+      if (isLive(x.ev)) return '<span class="live">LIVE</span>';
+      if (isFinished(x.ev)) {
+        const r = model.settle(x.v.key, x.ev.home.score, x.ev.away.score);
+        return `${x.ev.home.score}:${x.ev.away.score} ${r === true ? '<i class="ok">✓</i>' : r === false ? '<i class="bad">✗</i>' : '↺'}`;
+      }
+      return esc(timeOf(x.ev.ts));
+    };
     return `
       <section class="card acca">
-        <div class="acca-head"><b>Цінні ставки · ${values.length} ${help('value')}</b><span>ймовірність вища, ніж закладено в коефіцієнт</span></div>
-        ${values.slice(0, 5).map(row).join('')}
-        ${values.length > 5 ? `<details class="more"><summary>Показати всі (${values.length})</summary>${values.slice(5).map(row).join('')}</details>` : ''}
-        <p class="hint">Тут — матчі, що ще не почались. У статистиці «очікують результату» також ті, що вже йдуть.</p>
+        <div class="acca-head"><b>Цінні ставки дня · ${values.length} ${help('value')}</b><span>ймовірність вища, ніж закладено в коефіцієнт</span></div>
+        ${values.map(x => `<a class="acca-row" href="#/match/${x.slug}/${x.ev.id}">
+          <span><small>${status(x)}</small> ${esc(x.ev.home.short || x.ev.home.name)} — ${esc(x.ev.away.short || x.ev.away.name)}</span>
+          <b>${esc(x.v.short)} @ ${x.v.odds.toFixed(2)} · +${(x.v.edge * 100).toFixed(0)}%</b></a>`).join('')}
       </section>`;
   }
 
