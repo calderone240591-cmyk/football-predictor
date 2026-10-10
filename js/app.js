@@ -1353,7 +1353,19 @@
         <h3>За типами ставок</h3>
         <table class="markets"><thead><tr><th></th><th>Зіграло</th><th>Поставлено</th><th>Прибуток</th><th>ROI</th></tr></thead><tbody>${byCat}</tbody></table>
       </section>
-      ${recent ? `<section class="card"><h3>Ставки</h3>${recent}</section>` : '<div class="empty">Ще немає розрахованих ставок.<br>Вони з\'являться після перших зіграних матчів.</div>'}`;
+      ${(() => {
+        // За лігами — лише основні й цінні ставки: експрес складається з матчів різних ліг.
+        const single = settled.filter(b => b.slug && DONE(b.s));
+        if (!single.length) return '';
+        const rows = groupBy(single, b => leagueLabel(b.slug)).map(([l, list]) => {
+          const pr = list.reduce((s, b) => s + b.profit, 0), w = list.filter(b => b.s === 'win').length;
+          return `<tr><td>${esc(l)}</td><td>${w} з ${list.length}</td><td class="${pr >= 0 ? 'ok' : 'bad'}">${uah(pr)}</td><td>${(pr / (list.length * STAKE) * 100).toFixed(0)}%</td></tr>`;
+        }).join('');
+        return `<section class="card"><h3>За чемпіонатами</h3>
+          <table class="markets"><thead><tr><th>Чемпіонат</th><th>Зіграло</th><th>Прибуток</th><th>ROI</th></tr></thead><tbody>${rows}</tbody></table>
+          <p class="hint">Основні й цінні ставки. Експреси сюди не входять — у них матчі різних ліг.</p></section>`;
+      })()}
+      ${recent ?`<section class="card"><h3>Ставки</h3>${recent}</section>` : '<div class="empty">Ще немає розрахованих ставок.<br>Вони з\'являться після перших зіграних матчів.</div>'}`;
   }
 
   $view.addEventListener('change', e => {
@@ -1688,6 +1700,12 @@
         <h3>За пунктами</h3>
         <table class="markets"><thead><tr><th>Експрес</th><th>Зайшло</th><th>Очікувалось</th></tr></thead><tbody>${bySlot}</tbody></table>
       </section>` : ''}
+      ${(() => {
+        // Події з експресів за лігами: скільки зіграло (за справедливим кф кожної події).
+        const legs = list.flatMap(a => a.legs.map((l, j) => ({ ...l, k: 1 / l.p, st: a.st.legs[j] }))).filter(x => DONE(x.st.s));
+        return legs.length ? `<section class="card"><h3>Події експресів за чемпіонатами</h3>${statTable('Чемпіонат', groupBy(legs, x => leagueLabel(x.slug)))}
+          <p class="hint">Кожна подія з усіх експресів окремо: скільки зіграло і прибуток, якби на неї ставили 1 од. окремо за справедливим кф.</p></section>` : '';
+      })()}
       ${cards ? `<section class="card"><h3>Усі експреси</h3>${cards}</section>` : '<div class="empty">За цей період експресів ще немає.</div>'}`;
   }
 
@@ -1797,6 +1815,11 @@
         ${table(['Тип рекомендацій', ...H.slice(1)], summary)}
         <h2>Основні ставки за рівнем впевненості</h2>
         ${table(H, byLevel)}
+        <h2>Основні та цінні ставки за чемпіонатами</h2>
+        ${table(H, groupBy([
+          ...singles.map(r => ({ ...r.tip, st: r.tipSt, slug: r.slug, k: r.tip.odds || 1 / r.tip.p })),
+          ...singles.filter(r => r.value).map(r => ({ ...r.value, st: r.valSt, slug: r.slug, k: r.value.odds })),
+        ], x => leagueLabel(x.slug)).map(([l, xs]) => row(l, agg(xs, x => x.k))).join(''))}
         <h2>Цінні ставки (за кф DraftKings)</h2>
         ${table(H, [[0.03, 0.06, 'Перевага 3–6%'], [0.06, 0.10, 'Перевага 6–10%'], [0.10, 9, 'Перевага від 10%']]
           .map(([lo, hi, l]) => row(l, agg(values.filter(v => v.p * v.odds - 1 >= lo && v.p * v.odds - 1 < hi), x => x.odds))).join('')
