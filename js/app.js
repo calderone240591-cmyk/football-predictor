@@ -1307,15 +1307,16 @@
       const x = state.events.get(evKey(e.slug, e.id));
       return x && isFinished(x.ev) && !state.facts.has(e.id);
     }).sort((a, b) => b.ts - a.ts).slice(0, 200);
+    state.hist = { singles, accas, lives };
+    renderHistory();
+
+    // Факти матчів довантажуються у фоні (на телефоні це може тривати), потім екран оновлюється.
     if (needFacts.length) {
-      $view.innerHTML = `<div class="loading">Завантаження статистики матчів (${needFacts.length})…</div>`;
       await api.pool(needFacts, 4, async e => {
         try { state.facts.set(e.id, await api.matchFacts(e.slug, e.id)); } catch {}
       });
-      if (rid !== renderId) return;
+      if (rid === renderId) renderHistory();
     }
-    state.hist = { singles, accas, lives };
-    renderHistory();
   }
 
   // Статус лайв-ставки за фінальним рахунком (і кутовими/картками матчу).
@@ -1414,8 +1415,9 @@
     const periods = [[7, '7 днів'], [30, '30 днів'], [0, 'Увесь час']];
     const head = `
       <div class="controls">
-        <div class="segmented small">
+        <div class="segmented small tabs6">
           <button class="${tab === 'singles' ? 'on' : ''}" data-htab="singles">Основні</button>
+          <button class="${tab === 'value' ? 'on' : ''}" data-htab="value">Цінні</button>
           <button class="${tab === 'picks' ? 'on' : ''}" data-htab="picks">Варіанти</button>
           <button class="${tab === 'bands' ? 'on' : ''}" data-htab="bands">Кф 1.64+</button>
           <button class="${tab === 'live' ? 'on' : ''}" data-htab="live">Лайв</button>
@@ -1430,7 +1432,7 @@
         <button class="btn ghost" data-hclear="1">Очистити статистику</button>
       </div>
       <p class="hint pad">CSV відкривається в Excel, Google Таблицях чи Numbers. Об'єктивні висновки можна робити після кількох сотень ставок: на десятках результат сильно залежить від везіння.</p>`;
-    const body = { singles: singlesHtml, picks: picksHtml, bands: bandsHtml, live: liveHistHtml, accas: accasHtml }[tab]();
+    const body = { singles: singlesHtml, value: valueHtml, picks: picksHtml, bands: bandsHtml, live: liveHistHtml, accas: accasHtml }[tab]();
     $view.innerHTML = head + body + foot;
   }
 
@@ -1464,6 +1466,89 @@
             </div>
           </a>`).join('')}`;
     }).join('');
+  }
+
+  // ---------- Цінні ставки ----------
+  // Ставки, де наша ймовірність вища, ніж закладено в кф DraftKings (перевага від 3%, ймовірність від 30%).
+  // Прибуток рахується за реальним кф букмекера — це найчесніша перевірка, чи модель «б'є» ринок.
+  function valueRows() {
+    return singlesData().filter(r => r.value).map(r => ({
+      ...r, v: { ...r.value, st: r.valSt, edge: r.value.p * r.value.odds - 1 },
+    }));
+  }
+
+  function valueHtml() {
+    const rows = valueRows();
+    const done = rows.filter(r => DONE(r.v.st.s));
+    const wins = done.filter(r => r.v.st.s === 'win').length;
+    const profitOf = list => list.reduce((s, r) => s + (r.v.st.s === 'win' ? r.v.odds - 1 : -1), 0);
+    const profit = profitOf(done);
+    const avg = (list, f) => (list.length ? list.reduce((s, r) => s + f(r), 0) / list.length : null);
+    const avgOdds = avg(done, r => r.v.odds), avgEdge = avg(done, r => r.v.edge), exp = avg(done, r => r.v.p);
+    const pending = rows.filter(r => !DONE(r.v.st.s) && r.v.st.s !== 'void').length;
+
+    // Розбивки: за перевагою, за кф, за ринком. Для кожної — зіграло / очікувалось / прибуток.
+    const block = (label, list) => {
+      const w = list.filter(r => r.v.st.s === 'win').length;
+      const pr = profitOf(list);
+      return `${rateRow(label, w, list.length, list.length ? avg(list, r => r.v.p) : null)}
+        ${list.length ? `<p class="band-sum">середній кф ${avg(list, r => r.v.odds).toFixed(2)} · прибуток <b class="${pr >= 0 ? 'ok' : 'bad'}">${units(pr)}</b> од. · ROI ${(pr / list.length * 100).toFixed(0)}%</p>` : ''}`;
+    };
+    const byEdge = [[0.03, 0.06, 'Перевага 3–6%'], [0.06, 0.10, 'Перевага 6–10%'], [0.10, 9, 'Перевага від 10%']]
+      .map(([lo, hi, l]) => block(l, done.filter(r => r.v.edge >= lo && r.v.edge < hi))).join('');
+    const byOdds = [[1, 2, 'Кф до 2.00'], [2, 3, 'Кф 2.00–3.00'], [3, 99, 'Кф від 3.00']]
+      .map(([lo, hi, l]) => block(l, done.filter(r => r.v.odds >= lo && r.v.odds < hi))).join('');
+    const markets = new Map();
+    for (const r of done) {
+      if (!markets.has(r.v.short)) markets.set(r.v.short, []);
+      markets.get(r.v.short).push(r);
+    }
+    const byMarket = [...markets].sort((a, b) => b[1].length - a[1].length).map(([m, list]) => {
+      const w = list.filter(r => r.v.st.s === 'win').length, pr = profitOf(list);
+      return `<tr><td>${esc(m)}</td><td>${w} з ${list.length}</td><td class="${pr >= 0 ? 'ok' : 'bad'}">${units(pr)}</td></tr>`;
+    }).join('');
+
+    const byDay = new Map();
+    for (const r of rows.filter(r => r.v.st.s !== 'pending')) {
+      const d = dateOf(r.ts);
+      if (!byDay.has(d)) byDay.set(d, []);
+      byDay.get(d).push(r);
+    }
+    const days = [...byDay].map(([d, list]) => {
+      const dd = list.filter(r => DONE(r.v.st.s)), pr = profitOf(dd);
+      return `
+        <div class="day-head"><b>${esc(d)}</b><span>${dd.length ? `${dd.filter(r => r.v.st.s === 'win').length} з ${dd.length} · ${units(pr)} од.` : ''}</span></div>
+        ${list.map(r => `
+          <a class="hrow" href="#/match/${r.slug}/${r.id}">
+            <div class="hrow-main">
+              <small>${esc(leagueLabel(r.slug))}</small>
+              <span>${esc(r.home)} — ${esc(r.away)} ${r.v.st.score ? `<b>${esc(r.v.st.score)}</b>` : ''}</span>
+              <em>${esc(r.v.short)} @ ${r.v.odds.toFixed(2)} · ймовірність ${pct(r.v.p)} · перевага +${(r.v.edge * 100).toFixed(1)}%</em>
+            </div>
+            <div class="hrow-st">${r.v.st.s === 'live' ? '<span class="live">LIVE</span>' : STATUS_ICON[r.v.st.s] || ''}</div>
+          </a>`).join('')}`;
+    }).join('');
+
+    return `
+      <section class="card">
+        <div class="kpis">
+          <div><b class="${profit >= 0 ? 'ok' : 'bad'}">${done.length ? units(profit) : '—'}</b><span>прибуток, од.<br>за кф DraftKings</span></div>
+          <div><b>${done.length ? (profit / done.length * 100).toFixed(0) + '%' : '—'}</b><span>ROI<br>${wins} з ${done.length} зіграло</span></div>
+          <div><b>${pending}</b><span>очікують<br>результату</span></div>
+        </div>
+        <div class="kpis kpis2">
+          <div><b>${pctOf(wins, done.length)}</b><span>зіграло<br>очікувалось ${exp != null ? Math.round(exp * 100) + '%' : '—'}</span></div>
+          <div><b>${avgOdds != null ? avgOdds.toFixed(2) : '—'}</b><span>середній<br>кф</span></div>
+          <div><b>${avgEdge != null ? '+' + (avgEdge * 100).toFixed(1) + '%' : '—'}</b><span>середня<br>перевага</span></div>
+        </div>
+        <p class="hint">Цінна ставка — ринок, де наша ймовірність вища, ніж закладено в кф DraftKings: перевага від 3% при ймовірності від 30%. Прибуток — при ставці 1 од. на кожну за кф DraftKings. Цінні ставки виграють рідше за основні (кф вищі), тож оцінювати їх можна лише за прибутком на сотнях ставок.</p>
+      </section>
+      ${done.length ? `
+      <section class="card"><h3>За розміром переваги</h3>${byEdge}
+        <p class="hint">Якщо модель справді бачить те, чого не бачить ринок, ставки з більшою перевагою мають давати більший ROI.</p></section>
+      <section class="card"><h3>За коефіцієнтом</h3>${byOdds}</section>
+      <section class="card"><h3>За ринком</h3><table class="markets"><thead><tr><th>Ринок</th><th>Зіграло</th><th>Прибуток, од.</th></tr></thead><tbody>${byMarket}</tbody></table></section>` : ''}
+      ${days ? `<section class="card"><h3>По днях</h3>${days}</section>` : '<div class="empty">За цей період цінних ставок ще немає.<br>Вони з\'являються, коли кф DraftKings вищий, ніж має бути за прогнозом.</div>'}`;
   }
 
   function picksHtml() {
@@ -1746,6 +1831,10 @@
         ${table(['Тип рекомендацій', ...H.slice(1)], summary)}
         <h2>Основні ставки за рівнем впевненості</h2>
         ${table(H, byLevel)}
+        <h2>Цінні ставки (за кф DraftKings)</h2>
+        ${table(H, [[0.03, 0.06, 'Перевага 3–6%'], [0.06, 0.10, 'Перевага 6–10%'], [0.10, 9, 'Перевага від 10%']]
+          .map(([lo, hi, l]) => row(l, agg(values.filter(v => v.p * v.odds - 1 >= lo && v.p * v.odds - 1 < hi), x => x.odds))).join('')
+          + row('Усі цінні ставки', agg(values, x => x.odds)))}
         ${byGroup ? `<h2>Найкращі варіанти за групами ринків</h2>${table(H, byGroup)}` : ''}
         <h2>Рекомендації за діапазонами коефіцієнтів</h2>
         ${table(H, byBand)}
@@ -1797,6 +1886,14 @@
           num(r.tip.p), ['', 'низька', 'середня', 'висока'][r.tip.level], RES[r.tipSt.s],
           r.value ? r.value.short : '', r.value ? num(r.value.odds) : '', r.valSt ? RES[r.valSt.s] : '']);
       }
+    } else if (tab === 'value') {
+      rows = [['Дата', 'Час', 'Турнір', 'Господарі', 'Гості', 'Рахунок', 'Цінна ставка', 'Ймовірність', 'Кф DraftKings', 'Перевага', 'Результат', 'Прибуток, од.']];
+      for (const r of valueRows()) {
+        const s = r.v.st.s;
+        rows.push([FP.dateOfTs(r.ts), timeOf(r.ts), leagueLabel(r.slug), r.home, r.away, r.v.st.score || '', r.v.short,
+          num(r.v.p), num(r.v.odds), num(r.v.edge), RES[s] || 'немає даних',
+          s === 'win' ? num(r.v.odds - 1) : s === 'loss' ? '-1' : '']);
+      }
     } else if (tab === 'live') {
       rows = [['Дата', 'Турнір', 'Господарі', 'Гості', 'Перерва', 'Фінал', 'Ринок', 'Ставка', 'Ймовірність', 'Кф (справедливий)', 'Результат']];
       for (const r of liveRows()) {
@@ -1827,7 +1924,7 @@
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `statystyka-${{ singles: 'osnovni', picks: 'varianty', bands: 'kf-1.64-9.99', live: 'live', accas: 'ekspresy' }[tab]}-${FP.localDate(0)}.csv`;
+    a.download = `statystyka-${{ singles: 'osnovni', value: 'cinni', picks: 'varianty', bands: 'kf-1.64-9.99', live: 'live', accas: 'ekspresy' }[tab]}-${FP.localDate(0)}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();

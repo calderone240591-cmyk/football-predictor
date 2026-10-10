@@ -417,6 +417,10 @@ a.acca-row { color: inherit; text-decoration: none; }
 .notice-card p { margin: 6px 0 0; }
 .tip-main i { font-style: normal; font-size: 15px; margin-left: 6px; }
 
+/* Перемикач вкладок статистики: 6 кнопок у дві лінії по 3. */
+.segmented.tabs6 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+.kpis2 { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+
 /* ---------- лайв ---------- */
 .tabbar a { font-size: 10px; }
 .segmented.small button { font-size: 12px; padding: 6px 2px; }

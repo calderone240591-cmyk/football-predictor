@@ -108,6 +108,13 @@ FP.history = (() => {
   // Записи, зроблені до завантаження, мають пріоритет. Нова версія параметрів — скидання з нуля.
   const legacy = key => { try { return JSON.parse(localStorage.getItem(LEGACY[key])); } catch { return null; } };
   const ready = FP.store.ready.then(() => {
+    // Сховище не завантажилось — працюємо в пам'яті і нічого не скидаємо й не видаляємо,
+    // щоб не втратити збережену статистику. Наступний запуск прочитає її як звичайно.
+    if (!FP.store.isLoaded()) {
+      data = { ...(legacy('singles') || {}), ...data };
+      live = { ...(legacy('live') || {}), ...live };
+      return;
+    }
     const stored = k => FP.store.get('state', k) || legacy(k);
     data = { ...(stored('singles') || {}), ...data };
     const sa = stored('accas');
