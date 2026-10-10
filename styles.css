@@ -398,20 +398,10 @@ a.acca-row { color: inherit; text-decoration: none; }
 .pchip i { font-style: normal; }
 .band-sum { margin: -6px 0 10px; font-size: 12px; color: var(--muted); }
 
-/* розділ «Кф 1.64–9.99» */
-.band-card { padding: 10px 12px; }
 .band-head { display: grid; gap: 1px; color: inherit; text-decoration: none; margin-bottom: 4px; }
 .band-head small { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
 .band-head small img { width: 13px; height: 13px; object-fit: contain; }
 .band-head span { font-weight: 600; font-size: 14px; }
-.band-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 14px; }
-.band-row b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent); }
-.band-k { flex: none; width: 74px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.band-p { flex: none; width: 38px; text-align: right; color: var(--muted); font-size: 13px; }
-.band-o { flex: none; width: 54px; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
-.band-o small { font-size: 9px; font-weight: 500; color: var(--muted); margin-left: 2px; }
-.band-row .badge { margin-left: 0; }
-.empty-band em { color: var(--muted); font-size: 12px; }
 
 .notice-card { border-left: 4px solid var(--draw); }
 .notice-card p { margin: 6px 0 0; }
@@ -420,6 +410,16 @@ a.acca-row { color: inherit; text-decoration: none; }
 /* Перемикач вкладок статистики: 6 кнопок у дві лінії по 3. */
 .segmented.tabs6 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
 .kpis2 { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+
+/* Лайв: перший тайм 0:0 — виділення і блок тоталу 1.5. */
+.zero-card { border: 2px solid var(--mid); }
+.zero-box { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--mid) 12%, transparent); }
+.zero-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--mid); margin-bottom: 6px; }
+.zero-row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); }
+.zero-row:first-of-type { border-top: 0; }
+.zero-row div { display: grid; } .zero-row small { font-size: 11px; color: var(--muted); }
+.zero-row > b { font-size: 18px; } .zero-row i { font-style: normal; color: var(--muted); font-size: 13px; }
+.zero-row.fav > b { color: var(--hi); }
 
 /* ---------- лайв ---------- */
 .tabbar a { font-size: 10px; }

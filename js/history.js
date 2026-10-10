@@ -47,17 +47,15 @@ FP.history = (() => {
       value: pred.value ? { key: pred.value.key, short: pred.value.short, p: r3(pred.value.p), odds: pred.value.odds } : null,
       // Найкращі варіанти по групах ринків.
       picks: pred.groups.filter(g => g.pick).map(g => ({ group: g.name, key: g.pick.key, short: g.pick.short, p: r3(g.pick.p) })),
-      // Рекомендації в діапазонах кф 1.64–9.99.
-      bands: pred.bands.filter(b => b.pick).map(b => ({
-        band: `${b.lo}–${b.hi}`, key: b.pick.key, short: b.pick.short, p: r3(b.pick.p),
-        odds: b.pick.odds || null, k: r3(b.pick.odds || 1 / b.pick.p), value: b.isValue,
-      })),
     };
   }
 
+  // У статистику йдуть лише матчі, що починаються не раніше FP.STATS_FROM.
+  const counts = ev => ev.ts >= FP.STATS_FROM;
+
   // Оновлюємо запис до самого старту: фіксується останній передматчевий прогноз.
   function record(slug, ev, pred) {
-    if (ev.ts * 1000 <= Date.now()) return;
+    if (ev.ts * 1000 <= Date.now() || !counts(ev)) return;
     const prev = data[ev.id];
     const next = entryOf(slug, ev, pred);
     if (prev && JSON.stringify(prev) === JSON.stringify(next)) return;
@@ -70,9 +68,10 @@ FP.history = (() => {
   // ---------- лайв-рекомендації (у перерві) ----------
   // Фіксуємо рекомендації, поки триває перерва (останній варіант перед 2-м таймом).
   function recordLive(slug, ev, ht, recs) {
+    if (!counts(ev)) return;
     live[ev.id] = {
       slug, ts: ev.ts, home: ev.home.short || ev.home.name, away: ev.away.short || ev.away.name, ht,
-      picks: recs.map(m => ({ key: m.key, group: m.group, short: m.short, p: r3(m.p), k: r3(1 / m.p) })),
+      picks: recs.map(m => ({ key: m.key, group: m.group, short: m.short, p: r3(m.p), k: r3(1 / m.p), zero: !!m.zero })),
     };
     saveLive();
   }

@@ -301,10 +301,6 @@ FP.model = (() => {
   const TIP_GROUPS = new Set([G.RES, G.TOT, G.BTTS, G.HCP, G.TT]);
   const TIP_EXCLUDE = new Set(['HO05', 'AO05', 'U45']);
 
-  // Діапазони коефіцієнтів для розділу «Кф 1.64–9.99» і ринки, з яких обираються рекомендації.
-  const ODDS_BANDS = [[1.64, 2.5], [2.5, 4.5], [4.5, 9.99]];
-  const BAND_GROUPS = new Set([G.RES, G.TOT, G.BTTS, G.HCP, G.TT, G.COMBO]);
-
   // Ймовірність ринку з урахуванням повернень: P(виграш) / P(не повернення).
   function scoreMarketProb(g, mk) {
     let win = 0, push = 0;
@@ -433,9 +429,6 @@ FP.model = (() => {
     }
 
     const g = grid(lh, la);
-    const scores = [];
-    for (let h = 0; h <= MAX_GOALS; h++) for (let a = 0; a <= MAX_GOALS; a++) scores.push({ h, a, p: g[h][a] });
-    scores.sort((x, y) => y.p - x.p);
 
     const book = bookOdds(ev.odds);
     const scoreMarkets = SCORE_MARKETS.map(mk => ({ ...mk, p: scoreMarketProb(g, mk) }));
@@ -467,20 +460,9 @@ FP.model = (() => {
       return { name, list, pick };
     }).filter(x => x.list.length);
 
-    // Рекомендації в діапазонах коефіцієнтів 1.64–9.99: у кожному діапазоні — цінна ставка
-    // (якщо кф букмекера дає перевагу), інакше найімовірніший варіант. Кф — букмекерський, якщо є, інакше справедливий.
-    const bands = ODDS_BANDS.map(([lo, hi]) => {
-      const inBand = markets.filter(x => BAND_GROUPS.has(x.group) && !TIP_EXCLUDE.has(x.key))
-        .map(x => ({ ...x, k: x.odds || 1 / x.p }))
-        .filter(x => x.k >= lo && x.k <= hi);
-      const value = inBand.filter(x => x.edge != null && x.edge >= VALUE_EDGE).sort((a, b) => b.edge - a.edge)[0];
-      const pick = value || inBand.sort((a, b) => b.p - a.p)[0] || null;
-      return { lo, hi, pick, isValue: !!value };
-    });
-
     return {
       lh, la, model: { lh: mlh, la: mla, ...modelCore }, market, useXg,
-      prob, markets, groups, bands, scores: scores.slice(0, 9), tip, alternatives,
+      prob, markets, groups, tip, alternatives,
       value: valueBets[0] || null,
       corners: cc && cc.corners, cards: cc && cc.cards,
       lowData: minPlayed < 4, home: H, away: A,
@@ -745,5 +727,5 @@ FP.model = (() => {
     return undefined;
   }
 
-  return { build, predict, value, settle, isResult, liveAnalysis, liveSettle, GROUPS: G, ODDS_BANDS, TUNE };
+  return { build, predict, value, settle, isResult, liveAnalysis, liveSettle, GROUPS: G, TUNE };
 })();
