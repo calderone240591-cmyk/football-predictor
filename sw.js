@@ -1,5 +1,5 @@
 // Офлайн-оболонка додатка. Дані API не кешуються тут — ними керує js/api.js.
-const VERSION = 'fp-v20';
+const VERSION = 'fp-v21';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'js/config.js', 'js/store.js', 'js/api.js', 'js/model.js', 'js/history.js', 'js/glossary.js', 'js/slip.js', 'js/app.js',
@@ -25,9 +25,12 @@ self.addEventListener('fetch', e => {
   const url = new URL(req.url);
 
   // Власні файли: спершу мережа (щоб оновлення приходили одразу), без мережі — кеш.
+  // cache: 'no-cache' — оминаємо HTTP-кеш браузера (GitHub Pages дозволяє тримати файли до 10 хв),
+  // інакше після оновлення додаток якийсь час показував би стару версію.
   if (url.origin === location.origin) {
+    const fresh = req.mode === 'navigate' ? fetch(req.url, { cache: 'no-cache' }) : fetch(new Request(req, { cache: 'no-cache' }));
     e.respondWith(
-      fetch(req)
+      fresh
         .then(res => {
           const copy = res.clone();
           caches.open(VERSION).then(c => c.put(req, copy));

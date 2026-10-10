@@ -1115,7 +1115,7 @@
   // ---------- Статистика прогнозів ----------
   // Одиночні: основна рекомендація і цінна ставка кожного матчу (останній прогноз перед стартом).
   // Експреси: усі 11 готових експресів — активні й замінені.
-  state.histTab = 'singles';
+  state.histTab = 'bank';
   state.histPeriod = 30;
 
   async function viewHistory() {
@@ -1264,6 +1264,7 @@
     const head = `
       <div class="controls">
         <div class="segmented small tabs6">
+          <button class="${tab === 'bank' ? 'on' : ''}" data-htab="bank">Рахунок</button>
           <button class="${tab === 'singles' ? 'on' : ''}" data-htab="singles">Основні</button>
           <button class="${tab === 'value' ? 'on' : ''}" data-htab="value">Цінні</button>
           <button class="${tab === 'picks' ? 'on' : ''}" data-htab="picks">Варіанти</button>
@@ -1279,7 +1280,7 @@
         <button class="btn ghost" data-hclear="1">Очистити статистику</button>
       </div>
       <p class="hint pad">CSV відкривається в Excel, Google Таблицях чи Numbers. Об'єктивні висновки можна робити після кількох сотень ставок: на десятках результат сильно залежить від везіння.</p>`;
-    const body = { singles: singlesHtml, value: valueHtml, picks: picksHtml, live: liveHistHtml, accas: accasHtml }[tab]();
+    const body = { bank: bankHtml, singles: singlesHtml, value: valueHtml, picks: picksHtml, live: liveHistHtml, accas: accasHtml }[tab]();
     $view.innerHTML = head + body + foot;
   }
 
@@ -1314,6 +1315,110 @@
           </a>`).join('')}`;
     }).join('');
   }
+
+  // ---------- Віртуальний рахунок ----------
+  // Симуляція: на кожну основну ставку, цінну ставку і кожен готовий експрес — 50 грн.
+  // Коефіцієнт — букмекерський (DraftKings), якщо був, інакше справедливий (1 / ймовірність).
+  // На «найкращі варіанти» і лайв не ставимо.
+  const STAKE = 50;
+  const BANK_CATS = { tip: 'Основні', value: 'Цінні', acca: 'Експреси' };
+  const bankStart = () => { try { return Number(localStorage.getItem('fp_bank_start')) || 5000; } catch { return 5000; } };
+  const uah = v => `${v >= 0 ? '+' : '−'}${Math.abs(Math.round(v)).toLocaleString('uk-UA')} грн`;
+  const money = v => `${Math.round(v).toLocaleString('uk-UA')} грн`;
+
+  function bankBets() {
+    const bets = [];
+    for (const r of singlesData()) {
+      const base = { ts: r.ts, slug: r.slug, id: r.id, title: `${r.home} — ${r.away}`, score: r.tipSt.score };
+      bets.push({ ...base, cat: 'tip', pick: r.tip.short, odds: r.tip.odds || 1 / r.tip.p, book: !!r.tip.odds, s: r.tipSt.s });
+      if (r.value) bets.push({ ...base, cat: 'value', pick: r.value.short, odds: r.value.odds, book: true, s: r.valSt.s });
+    }
+    for (const a of accasData()) {
+      // Події з поверненням не враховуються в коефіцієнті експресу.
+      const legs = a.legs.filter((l, j) => a.st.legs[j].s !== 'void');
+      const odds = legs.reduce((s, l) => s * (l.odds || 1 / l.p), 1);
+      bets.push({
+        ts: a.legs[a.legs.length - 1].ts, cat: 'acca', title: a.title, pick: `${a.legs.length} події`,
+        odds, book: a.legs.every(l => l.odds), s: a.st.s,
+      });
+    }
+    return bets.map(b => ({ ...b, profit: b.s === 'win' ? STAKE * (b.odds - 1) : b.s === 'loss' ? -STAKE : 0 }));
+  }
+
+  // Графік балансу після кожної розрахованої ставки.
+  function balanceChart(start, settled) {
+    if (settled.length < 2) return '';
+    const pts = [start];
+    settled.forEach(b => pts.push(pts[pts.length - 1] + b.profit));
+    const min = Math.min(...pts, start), max = Math.max(...pts, start), span = max - min || 1;
+    const W = 300, H = 110;
+    const x = i => (i / (pts.length - 1)) * W, y = v => H - ((v - min) / span) * H;
+    const line = pts.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+    const up = pts[pts.length - 1] >= start;
+    return `
+      <div class="chart">
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Графік балансу">
+          <line x1="0" x2="${W}" y1="${y(start).toFixed(1)}" y2="${y(start).toFixed(1)}" class="chart-base"/>
+          <polyline points="${line}" class="chart-line ${up ? 'up' : 'down'}"/>
+        </svg>
+        <div class="chart-axis"><span>${money(max)}</span><span>${money(min)}</span></div>
+      </div>`;
+  }
+
+  function bankHtml() {
+    const start = bankStart();
+    const bets = bankBets();
+    const settled = bets.filter(b => DONE(b.s) || b.s === 'void').sort((a, b) => a.ts - b.ts);
+    const pending = bets.filter(b => b.s === 'pending' || b.s === 'live');
+    const profit = settled.reduce((s, b) => s + b.profit, 0);
+    const staked = settled.length * STAKE;
+    const wins = settled.filter(b => b.s === 'win').length, losses = settled.filter(b => b.s === 'loss').length;
+
+    const byCat = Object.entries(BANK_CATS).map(([cat, label]) => {
+      const list = settled.filter(b => b.cat === cat);
+      const pr = list.reduce((s, b) => s + b.profit, 0);
+      const w = list.filter(b => b.s === 'win').length;
+      return `<tr><td>${label}</td><td>${list.length ? `${w} з ${list.length}` : '—'}</td><td>${money(list.length * STAKE)}</td>
+        <td class="${pr >= 0 ? 'ok' : 'bad'}">${list.length ? uah(pr) : '—'}</td><td>${list.length ? (pr / (list.length * STAKE) * 100).toFixed(0) + '%' : '—'}</td></tr>`;
+    }).join('');
+
+    const recent = settled.slice().reverse().slice(0, 50).map(b => `
+      <a class="hrow" ${b.slug ? `href="#/match/${b.slug}/${b.id}"` : 'href="#/express"'}>
+        <div class="hrow-main">
+          <small>${esc(dateOf(b.ts))} · ${BANK_CATS[b.cat]}</small>
+          <span>${esc(b.title)} ${b.score ? `<b>${esc(b.score)}</b>` : ''}</span>
+          <em>${esc(b.pick)} @ ${b.odds.toFixed(2)} ${b.book ? 'DK' : 'спр.'} · ставка 50 грн</em>
+        </div>
+        <div class="hrow-st bank-res ${b.profit > 0 ? 'ok' : b.profit < 0 ? 'bad' : ''}">${b.s === 'void' ? '↺ 0' : uah(b.profit)}</div>
+      </a>`).join('');
+
+    return `
+      <section class="card bank">
+        <div class="bank-balance">
+          <span>Баланс</span>
+          <b class="${profit >= 0 ? 'ok' : 'bad'}">${money(start + profit)}</b>
+          <small>стартовий банк <input id="bank-start" type="number" inputmode="numeric" min="0" step="100" value="${start}"> грн</small>
+        </div>
+        <div class="kpis kpis2">
+          <div><b class="${profit >= 0 ? 'ok' : 'bad'}">${settled.length ? uah(profit) : '—'}</b><span>прибуток</span></div>
+          <div><b>${staked ? (profit / staked * 100).toFixed(1) + '%' : '—'}</b><span>ROI<br>поставлено ${money(staked)}</span></div>
+          <div><b>${wins} / ${losses}</b><span>виграно / програно<br>в грі ${pending.length} (${money(pending.length * STAKE)})</span></div>
+        </div>
+        ${balanceChart(start, settled)}
+        <p class="hint">Симуляція: на кожну основну ставку, цінну ставку і кожен готовий експрес ставиться 50 грн. Коефіцієнт — DraftKings, якщо був, інакше справедливий (у букмекера реальний кф на 5–8% нижчий, тож реальний результат був би трохи гіршим). На «найкращі варіанти» і лайв не ставимо.</p>
+      </section>
+      <section class="card">
+        <h3>За типами ставок</h3>
+        <table class="markets"><thead><tr><th></th><th>Зіграло</th><th>Поставлено</th><th>Прибуток</th><th>ROI</th></tr></thead><tbody>${byCat}</tbody></table>
+      </section>
+      ${recent ? `<section class="card"><h3>Ставки</h3>${recent}</section>` : '<div class="empty">Ще немає розрахованих ставок.<br>Вони з\'являться після перших зіграних матчів.</div>'}`;
+  }
+
+  $view.addEventListener('change', e => {
+    if (e.target.id !== 'bank-start') return;
+    try { localStorage.setItem('fp_bank_start', String(Math.max(0, Number(e.target.value) || 0))); } catch {}
+    renderHistory();
+  });
 
   // ---------- Цінні ставки ----------
   // Ставки, де наша ймовірність вища, ніж закладено в кф DraftKings (перевага від 3%, ймовірність від 30%).
@@ -1641,6 +1746,19 @@
         <h1>Футбол Аналітика — статистика прогнозів</h1>
         <div class="meta">Період: ${esc(period)} · сформовано ${esc(new Date().toLocaleString('uk-UA'))}</div>
         <div class="band"></div>
+        ${(() => {
+          const bets = bankBets().filter(b => DONE(b.s) || b.s === 'void');
+          const pr = bets.reduce((s, b) => s + b.profit, 0);
+          const rows = [['Усі ставки', bets], ...Object.entries(BANK_CATS).map(([c, l]) => [l, bets.filter(b => b.cat === c)])]
+            .map(([l, list]) => {
+              const p = list.reduce((s, b) => s + b.profit, 0);
+              return `<tr><td>${esc(l)}</td><td>${list.length}</td><td>${list.filter(b => b.s === 'win').length}</td><td>${money(list.length * STAKE)}</td>
+                <td class="${p >= 0 ? 'pos' : 'neg'}">${list.length ? uah(p) : '—'}</td><td>${list.length ? (p / (list.length * STAKE) * 100).toFixed(1) + '%' : '—'}</td></tr>`;
+            }).join('');
+          return `<h2>Віртуальний рахунок (50 грн на ставку)</h2>
+            <p class="meta">Стартовий банк ${money(bankStart())} → баланс <b>${money(bankStart() + pr)}</b></p>
+            ${table(['', 'Ставок', 'Виграно', 'Поставлено', 'Прибуток', 'ROI'], rows)}`;
+        })()}
         <h2>Підсумок</h2>
         ${table(['Тип рекомендацій', ...H.slice(1)], summary)}
         <h2>Основні ставки за рівнем впевненості</h2>
@@ -1699,6 +1817,12 @@
           num(r.tip.p), ['', 'низька', 'середня', 'висока'][r.tip.level], RES[r.tipSt.s],
           r.value ? r.value.short : '', r.value ? num(r.value.odds) : '', r.valSt ? RES[r.valSt.s] : '']);
       }
+    } else if (tab === 'bank') {
+      rows = [['Дата', 'Тип', 'Подія', 'Рахунок', 'Ставка', 'Кф', 'Джерело кф', 'Сума, грн', 'Результат', 'Прибуток, грн']];
+      for (const b of bankBets().sort((x, y) => x.ts - y.ts)) {
+        rows.push([FP.dateOfTs(b.ts), BANK_CATS[b.cat], b.title, b.score || '', b.pick, num(b.odds), b.book ? 'DraftKings' : 'справедливий',
+          STAKE, RES[b.s] || 'немає даних', DONE(b.s) || b.s === 'void' ? num(b.profit) : '']);
+      }
     } else if (tab === 'value') {
       rows = [['Дата', 'Час', 'Турнір', 'Господарі', 'Гості', 'Рахунок', 'Цінна ставка', 'Ймовірність', 'Кф DraftKings', 'Перевага', 'Результат', 'Прибуток, од.']];
       for (const r of valueRows()) {
@@ -1735,7 +1859,7 @@
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `statystyka-${{ singles: 'osnovni', value: 'cinni', picks: 'varianty', live: 'live', accas: 'ekspresy' }[tab]}-${FP.localDate(0)}.csv`;
+    a.download = `statystyka-${{ bank: 'rakhunok', singles: 'osnovni', value: 'cinni', picks: 'varianty', live: 'live', accas: 'ekspresy' }[tab]}-${FP.localDate(0)}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();

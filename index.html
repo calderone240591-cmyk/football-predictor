@@ -66,7 +66,13 @@
   <script src="js/app.js"></script>
   <script>
     if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-      navigator.serviceWorker.register('sw.js');
+      // Коли встановилась нова версія додатка — одразу перезавантажуємо сторінку, щоб не працювати зі старою.
+      const hadController = !!navigator.serviceWorker.controller;
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (hadController && !reloaded) { reloaded = true; location.reload(); }
+      });
+      navigator.serviceWorker.register('sw.js').then(r => r.update()).catch(() => {});
     }
   </script>
 </body>
