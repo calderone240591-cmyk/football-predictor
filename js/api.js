@@ -233,41 +233,11 @@ FP.api = (() => {
     return cached(k, 0, `${SITE}${slug}/summary?event=${eventId}`, slimSummary, true);
   }
 
-  // ---------- лайв ----------
-  // Поточний ігровий день турніру (тут є матчі, що йдуть зараз), оновлення раз на 15 с.
-  const LIVE_TTL = 15 * 1000;
-  const liveBoard = slug =>
-    cached(`lb:${slug}`, LIVE_TTL, `${SITE}${slug}/scoreboard`, d => ({ events: (d.events || []).map(slimEvent) }));
-
-  // Жива статистика матчу: рахунок, статус і показники обох команд.
-  function liveStats(slug, eventId) {
-    return cached(`ls:${eventId}`, LIVE_TTL, `${SITE}${slug}/summary?event=${eventId}`, d => {
-      const comp = d.header && d.header.competitions && d.header.competitions[0];
-      const side = ha => (comp ? comp.competitors.find(c => c.homeAway === ha) : null);
-      const team = c => {
-        const t = c && ((d.boxscore && d.boxscore.teams) || []).find(x => String(x.team.id) === String(c.id));
-        const s = name => {
-          const v = t && (t.statistics || []).find(x => x.name === name);
-          return v ? Number(v.displayValue) : null;
-        };
-        return {
-          score: c && c.score != null ? Number(c.score) : null,
-          shots: s('totalShots'), sot: s('shotsOnTarget'), poss: s('possessionPct'),
-          corners: s('wonCorners'), yellow: s('yellowCards'), red: s('redCards'), fouls: s('foulsCommitted'),
-        };
-      };
-      const st = comp && comp.status;
-      return {
-        status: st && st.type && st.type.name, clock: st && st.displayClock,
-        home: team(side('home')), away: team(side('away')),
-      };
-    });
-  }
-
-  // Факти зіграного матчу для розрахунку ставок: рахунок першого тайму, кутові, жовті картки.
-  // Матч уже не зміниться, тож кешуємо надовго.
+  // Факти зіграного матчу для розрахунку ставок: рахунок першого тайму, кутові, жовті картки,
+  // а також кутові (c1) і жовті картки (y1) першого тайму. Матч уже не зміниться, тож кешуємо надовго.
+  const minuteOf = dv => { const m = /^(\d+)/.exec(dv || ''); return m ? +m[1] : null; };
   function matchFacts(slug, eventId) {
-    return cached(`mf:${eventId}`, 60 * 24 * 60 * MIN, `${SITE}${slug}/summary?event=${eventId}`, d => {
+    return cached(`mf2:${eventId}`, 60 * 24 * 60 * MIN, `${SITE}${slug}/summary?event=${eventId}`, d => {
       const comp = d.header && d.header.competitions && d.header.competitions[0];
       const side = ha => (comp ? comp.competitors.find(c => c.homeAway === ha) : null);
       const h = side('home'), a = side('away');
@@ -282,7 +252,16 @@ FP.api = (() => {
       const hy = h && stat(h.id, 'yellowCards'), ay = a && stat(a.id, 'yellowCards');
       const box = [hc, ac, hy, ay].every(v => v != null && !isNaN(v))
         ? { homeCorners: hc, awayCorners: ac, homeYellow: hy, awayYellow: ay } : null;
-      return { ht, box };
+      // Кутові 1-го тайму — з текстового коментаря («Corner, …» з хвилиною; 45'+2' — ще 1-й тайм).
+      // Коментар є не в усіх лігах і буває неповним, тож рахуємо лише коли всі кутові матчу на місці.
+      const corners = (d.commentary || []).filter(x => /^Corner,/.test(x.text || ''));
+      const c1 = box && corners.length && corners.length === hc + ac
+        ? corners.filter(x => (minuteOf(x.time && x.time.displayValue) ?? 99) <= 45).length : null;
+      // Жовті картки 1-го тайму — з ключових подій матчу.
+      const ke = d.keyEvents || [];
+      const y1 = ke.some(k => k.type && k.type.type === 'halftime')
+        ? ke.filter(k => k.type && k.type.type === 'yellow-card' && k.period && k.period.number === 1).length : null;
+      return { ht, box, c1, y1 };
     });
   }
 
@@ -329,5 +308,5 @@ FP.api = (() => {
     return out;
   }
 
-  return { month, monthsAround, season, standings, lineups, teamSeasonStats, matchFacts, liveBoard, liveStats, clearCache, pool };
+  return { month, monthsAround, season, standings, lineups, teamSeasonStats, matchFacts, clearCache, pool };
 })();

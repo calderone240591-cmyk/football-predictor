@@ -514,3 +514,20 @@ a.acca-row { color: inherit; text-decoration: none; }
 @media (min-width: 560px) {
   .match { grid-template-columns: 1fr 220px; }
 }
+
+/* Рекомендації за ринками: група → варіант, ймовірність, рівень впевненості */
+.mrecs { display: grid; }
+.mrec { border-top: 1px solid var(--line); }
+.mrec:first-child { border-top: 0; }
+.mrec summary { list-style: none; cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 1px 10px; align-items: center; padding: 9px 0; }
+.mrec summary::-webkit-details-marker { display: none; }
+.mrec-name { grid-column: 1 / -1; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.mrec summary b { font-size: 15px; }
+.lvl { font-style: normal; font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+.lvl.hi { color: var(--hi); background: color-mix(in srgb, var(--hi) 14%, transparent); }
+.lvl.mid { color: var(--mid); background: color-mix(in srgb, var(--mid) 14%, transparent); }
+.lvl.lo { color: var(--muted); background: var(--surface-2); }
+.mrec-all { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 10px; }
+.mrec-all span { font-size: 12px; padding: 4px 8px; border-radius: 8px; background: var(--surface-2); color: var(--muted); }
+.mrec-all span b { color: var(--text, inherit); }
+.mrec-all span.on { outline: 1.5px solid var(--accent); color: inherit; }
