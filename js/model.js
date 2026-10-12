@@ -20,8 +20,8 @@ FP.model = (() => {
   const MARKET_WEIGHT = 0.7;  // ринок зазвичай точніший за чисту статистику
   const XG_WEIGHT = 0.4;      // частка xG в рейтингах, коли xG доступний
   const FIRST_HALF_SHARE = 0.44;
-  const MIN_TIP_ODDS = 1.50;  // рекомендації — від кф 1.5
-  const MAX_TIP_ODDS = 2.20;
+  const MIN_TIP_ODDS = 2.01;  // основні ставки — кф від 2.01 до 4.00
+  const MAX_TIP_ODDS = 4.00;
   const VALUE_EDGE = 0.03;    // мінімальна перевага над букмекером, щоб назвати ставку цінною
   const MAX_PICK_P = 0.75;    // рекомендації за ринками — з ймовірністю до 75% (кф від 1.33)
 
@@ -355,11 +355,13 @@ FP.model = (() => {
     return out;
   }
 
-  function confidence(p, minPlayed) {
-    let level = p >= 0.70 ? 3 : p >= 0.60 ? 2 : 1;
+  function confidence(p, minPlayed, hi = 0.70, mid = 0.60) {
+    let level = p >= hi ? 3 : p >= mid ? 2 : 1;
     if (minPlayed < 4) level = Math.max(1, level - 1);
     return { level, label: ['', 'Низька', 'Середня', 'Висока'][level] };
   }
+  // Для основних ставок (кф 2.01–4, ймовірність до 50%): висока — від 45%, середня — 38–45%.
+  const tipConfidence = (p, minPlayed) => confidence(p, minPlayed, 0.45, 0.38);
 
   // ctx: { home, away } — сезонна статистика команд (xG, кутові, картки) або null.
   function predict(m, ev, ctx) {
@@ -405,11 +407,14 @@ FP.model = (() => {
     // Мало даних — лише коли немає ні минулого сезону, ні (для єврокубків) рейтингу в чемпіонаті.
     const solid = m.previous || (m.league.cup && H.domestic && A.domestic);
     const minPlayed = solid ? 99 : Math.min(H.stats.p, A.stats.p);
-    const inRange = x => x.p >= 1 / MAX_TIP_ODDS && 1 / x.p >= MIN_TIP_ODDS;
+    // Основна ставка — найімовірніший ринок з кф від 2.01 до 4.00: кф букмекера, якщо він є,
+    // інакше справедливий (ймовірність приблизно 25–50%).
+    const tipOdds = x => x.odds || 1 / x.p;
+    const inRange = x => tipOdds(x) >= MIN_TIP_ODDS && tipOdds(x) <= MAX_TIP_ODDS;
     const candidates = markets.filter(x => TIP_GROUPS.has(x.group) && inRange(x));
-    const best = candidates[0] || markets.find(x => MARKET_BY_KEY.has(x.key) && x.group === G.RES);
-    const tip = { ...best, conf: confidence(best.p, minPlayed) };
-    const alternatives = candidates.filter(x => x.key !== best.key && x.p >= 0.55).slice(0, 3);
+    const best = candidates[0] || markets.find(x => TIP_GROUPS.has(x.group) && tipOdds(x) >= MIN_TIP_ODDS);
+    const tip = { ...best, conf: tipConfidence(best.p, minPlayed) };
+    const alternatives = candidates.filter(x => x.key !== best.key && x.p >= 0.38).slice(0, 3);
     const valueBets = markets
       .filter(x => x.edge != null && x.edge >= VALUE_EDGE && x.p >= 0.30)
       .sort((x, y) => y.edge - x.edge);

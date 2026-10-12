@@ -62,7 +62,13 @@
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         if (hadController && !reloaded) { reloaded = true; location.reload(); }
       });
-      navigator.serviceWorker.register('sw.js').then(r => r.update()).catch(() => {});
+      // Перевіряємо оновлення при запуску, кожні 5 хвилин і щоразу, коли додаток повертається на екран
+      // (на iPhone додаток з початкового екрана часто не перезапускається, а лише «прокидається»).
+      navigator.serviceWorker.register('sw.js').then(r => {
+        r.update();
+        setInterval(() => r.update().catch(() => {}), 5 * 60 * 1000);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) r.update().catch(() => {}); });
+      }).catch(() => {});
     }
   </script>
 </body>

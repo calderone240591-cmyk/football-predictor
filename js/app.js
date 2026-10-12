@@ -226,6 +226,7 @@
   // silent — фонове автооновлення: без індикатора і без помилок на весь екран.
   async function loadHome(rid, force, silent) {
     await FP.history.ready;   // щоб для матчів, що почались, одразу показати зафіксований прогноз
+    FP.history.sync(force).then(() => { if (rid === renderId) renderList(); });
     const { items, errors } = await loadDay(state.dayOffset, force);
     if (rid !== renderId) return;
     if (!items.length && errors === LEAGUES.length) {
@@ -799,6 +800,7 @@
     setHeader('Статистика');
     $view.innerHTML = '<div class="loading">Перевірка результатів…</div>';
     await FP.history.ready;
+    await FP.history.sync(true);   // серверний журнал — однаковий для телефона і браузера
     if (rid !== renderId) return;
 
     const singles = FP.history.all();
@@ -877,9 +879,8 @@
       <div class="btn-row pad">
         <button class="btn" data-pdf="1">Звіт PDF</button>
         <button class="btn ghost" data-export="${tab}">Таблиця CSV</button>
-        <button class="btn ghost" data-hclear="1">Очистити статистику</button>
       </div>
-      <p class="hint pad">CSV відкривається в Excel, Google Таблицях чи Numbers. Об'єктивні висновки можна робити після кількох сотень ставок: на десятках результат сильно залежить від везіння.</p>`;
+      <p class="hint pad">Прогнози записує сервер кожні 20 хвилин до початку кожного матчу, тож статистика однакова на телефоні й у браузері і не залежить від того, чи був відкритий додаток. CSV відкривається в Excel, Google Таблицях чи Numbers. Об'єктивні висновки можна робити після кількох сотень ставок: на десятках результат сильно залежить від везіння.</p>`;
     const body = ({ bank: bankHtml, singles: singlesHtml, value: valueHtml, picks: picksHtml }[tab] || bankHtml)();
     $view.innerHTML = head + body + foot;
   }
@@ -1430,12 +1431,6 @@
     else if (b.dataset.hper != null) { state.histPeriod = Number(b.dataset.hper); renderHistory(); }
     else if (b.dataset.export) exportCsv(b.dataset.export);
     else if (b.dataset.pdf) exportPdf(b);
-    else if (b.dataset.hclear) {
-      if (!confirm('Видалити всю статистику прогнозів?')) return;
-      FP.history.clear();
-      state.hist = null;
-      viewHistory();
-    }
   });
 
   // ---------- Довідка ----------

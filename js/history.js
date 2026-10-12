@@ -44,8 +44,31 @@ FP.history = (() => {
     saveSingles();
   }
 
-  const all = () => Object.entries(data).map(([id, x]) => ({ id, ...x }));
-  const get = id => data[id] || null;
+  // ---------- серверний журнал ----------
+  // GitHub Actions кожні 20 хв записує передматчеві прогнози всіх матчів (tools/record.js) у гілку
+  // journal. Телефон і браузер читають той самий журнал, тож статистика однакова на всіх пристроях
+  // і не залежить від того, чи був додаток відкритий перед матчем. Записи сервера мають пріоритет,
+  // локальні — запасний варіант для матчів, яких у журналі немає.
+  const REMOTE = 'https://raw.githubusercontent.com/calderone240591-cmyk/football-predictor/journal/journal.json';
+  let remote = {};
+  let syncedAt = 0, syncing = null;
+  function sync(force) {
+    if (syncing) return syncing;
+    if (!force && Date.now() - syncedAt < 2 * 60 * 1000) return Promise.resolve();
+    const timeout = new Promise(r => setTimeout(r, 10000));
+    syncing = Promise.race([timeout, (async () => {
+      try {
+        const res = await fetch(`${REMOTE}?t=${Date.now()}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const j = await res.json();
+        if (j.version === FP.STATS_VERSION) { remote = j.entries || {}; syncedAt = Date.now(); }
+      } catch {}
+    })()]).finally(() => { syncing = null; });
+    return syncing;
+  }
+
+  const all = () => Object.entries({ ...data, ...remote }).map(([id, x]) => ({ id, ...x }));
+  const get = id => remote[id] || data[id] || null;
 
   function clear() {
     data = {};
@@ -73,5 +96,5 @@ FP.history = (() => {
     try { Object.values(LEGACY).forEach(k => localStorage.removeItem(k)); localStorage.removeItem('fp_slip'); } catch {}
   });
 
-  return { ready, record, all, get, clear };
+  return { ready, record, all, get, clear, sync, entryOf };
 })();

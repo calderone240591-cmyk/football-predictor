@@ -1,0 +1,48 @@
+# Серверний журнал прогнозів: кожні 20 хвилин записує передматчеві прогнози матчів найближчих
+# 36 годин у гілку journal (tools/record.js). Додаток на телефоні й у браузері читає цей журнал.
+name: Журнал прогнозів
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: journal
+  cancel-in-progress: false
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TZ: Europe/Kyiv
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: journal
+          path: journal
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Минулі місяці ESPN не змінюються — тримаємо їх між запусками, щоб не вантажити щоразу.
+      - uses: actions/cache@v4
+        with:
+          path: espn-cache.json
+          key: espn-${{ github.run_id }}
+          restore-keys: espn-
+      - run: node tools/record.js journal/journal.json espn-cache.json
+      # Гілка journal тримає один коміт (перезаписується), щоб не накопичувати історію.
+      - name: Publish journal
+        working-directory: journal
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add journal.json
+          if git diff --cached --quiet; then echo "no changes"; exit 0; fi
+          git commit --amend -m "Journal" --quiet
+          git push --force --quiet origin HEAD:journal
