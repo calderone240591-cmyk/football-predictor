@@ -586,22 +586,6 @@
         <a class="gloss-link" href="#/info/markets">Що означають ТБ, ТМ, Ф1 та інші позначення →</a>
       </section>`}
 
-      ${started ? '' : `
-      <section class="card">
-        <h3>Рекомендації за ринками</h3>
-        <div class="mrecs">${pred.groups.filter(g => g.pick).map(g => `
-          <details class="mrec">
-            <summary>
-              <span class="mrec-name">${esc(g.name)}</span>
-              <b>${esc(g.pick.short)}</b>
-              <em class="lvl ${confClass(g.pick.conf)}">${pct(g.pick.p)} · ${g.pick.conf.label.toLowerCase()}</em>
-            </summary>
-            <div class="mrec-all">${g.list.map(x => `<span class="${x.key === g.pick.key ? 'on' : ''}">${esc(x.short)} <b>${pct(x.p)}</b></span>`).join('')}</div>
-          </details>`).join('')}
-        </div>
-        <p class="hint">У кожній групі — найімовірніший варіант з ймовірністю до 75% (справедливий кф від 1.33). Впевненість: висока — від 70%, середня — 60–70%, низька — нижче 60%. Торкніться групи, щоб побачити ймовірності всіх варіантів. Кутові й картки — оцінка за сезонною статистикою команд.</p>
-      </section>`}
-
       <section class="card">
         <h3>Опис матчу</h3>
         <ul class="reasons">${pred.reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>
@@ -871,7 +855,6 @@
           <button class="${tab === 'bank' ? 'on' : ''}" data-htab="bank">Рахунок</button>
           <button class="${tab === 'singles' ? 'on' : ''}" data-htab="singles">Основні</button>
           <button class="${tab === 'value' ? 'on' : ''}" data-htab="value">Цінні</button>
-          <button class="${tab === 'picks' ? 'on' : ''}" data-htab="picks">За ринками</button>
         </div>
         <div class="chips">${periods.map(([d, l]) => `<button class="chip ${state.histPeriod === d ? 'on' : ''}" data-hper="${d}">${l}</button>`).join('')}</div>
       </div>`;
@@ -881,40 +864,8 @@
         <button class="btn ghost" data-export="${tab}">Таблиця CSV</button>
       </div>
       <p class="hint pad">Прогнози записує сервер кожні 20 хвилин до початку кожного матчу, тож статистика однакова на телефоні й у браузері і не залежить від того, чи був відкритий додаток. CSV відкривається в Excel, Google Таблицях чи Numbers. Об'єктивні висновки можна робити після кількох сотень ставок: на десятках результат сильно залежить від везіння.</p>`;
-    const body = ({ bank: bankHtml, singles: singlesHtml, value: valueHtml, picks: picksHtml }[tab] || bankHtml)();
+    const body = ({ bank: bankHtml, singles: singlesHtml, value: valueHtml }[tab] || bankHtml)();
     $view.innerHTML = head + body + foot;
-  }
-
-  // Записи з розрахованими варіантами: { ...entry, items: [{ ...pick, st }] }.
-  function withStatuses(field) {
-    return state.hist.singles.filter(e => inPeriod(e.ts) && (e[field] || []).length).map(e => ({
-      ...e,
-      items: e[field].map(p => ({ ...p, st: legStatus({ slug: e.slug, id: e.id, ts: e.ts, key: p.key }) })),
-    })).sort((a, b) => b.ts - a.ts);
-  }
-
-  // Список матчів по днях з чіпами варіантів і ✓/✗.
-  function dayList(rows, chipLabel) {
-    const byDay = new Map();
-    for (const r of rows.filter(r => r.items.some(x => x.st.s !== 'pending'))) {
-      const d = dateOf(r.ts);
-      if (!byDay.has(d)) byDay.set(d, []);
-      byDay.get(d).push(r);
-    }
-    return [...byDay].map(([d, list]) => {
-      const done = list.flatMap(r => r.items).filter(x => DONE(x.st.s));
-      const w = done.filter(x => x.st.s === 'win').length;
-      return `
-        <div class="day-head"><b>${esc(d)}</b><span>${done.length ? `${w} з ${done.length}` : ''}</span></div>
-        ${list.map(r => `
-          <a class="hrow" href="#/match/${r.slug}/${r.id}">
-            <div class="hrow-main">
-              <small>${esc(leagueLabel(r.slug))}</small>
-              <span>${esc(r.home)} — ${esc(r.away)} ${r.items[0].st.score ? `<b>${esc(r.items[0].st.score)}</b>` : ''}</span>
-              <div class="pchips">${r.items.map(x => `<span class="pchip ${x.st.s}">${esc(chipLabel(x))} ${STATUS_ICON[x.st.s] || ''}</span>`).join('')}</div>
-            </div>
-          </a>`).join('')}`;
-    }).join('');
   }
 
   // ---------- Віртуальний рахунок ----------
@@ -1031,6 +982,41 @@
     }));
   }
 
+  // Що зіграло в матчі: результат і тотал 2.5 за фінальним рахунком («П1 · ТБ 2.5 (3 голи)»).
+  function outcomeOf(r) {
+    const x = state.events.get(evKey(r.slug, r.id));
+    if (!x || !isFinished(x.ev)) return null;
+    const h = x.ev.home.score, a = x.ev.away.score, g = h + a;
+    return `${h > a ? 'П1' : h < a ? 'П2' : 'Нічия'} · ${g > 2 ? 'ТБ' : 'ТМ'} 2.5 (${g} ${g === 1 ? 'гол' : g >= 2 && g <= 4 ? 'голи' : 'голів'})`;
+  }
+
+  // Таблиця цінних ставок: матч — прогноз — фінальний результат — що зіграло — підсумок у грн.
+  function valueResultsTable(rows) {
+    const done = rows.filter(r => DONE(r.v.st.s) || r.v.st.s === 'void').sort((a, b) => b.ts - a.ts);
+    if (!done.length) return '';
+    const total = done.reduce((s, r) => s + (r.v.st.s === 'win' ? (r.v.odds - 1) * STAKE : r.v.st.s === 'loss' ? -STAKE : 0), 0);
+    const w = done.filter(r => r.v.st.s === 'win').length;
+    return `
+      <section class="card">
+        <h3>Прогноз / ставка = результат</h3>
+        <table class="markets vres">
+          <thead><tr><th>Матч</th><th>Прогноз</th><th>Результат</th><th>Грн</th></tr></thead>
+          <tbody>${done.map(r => {
+            const s = r.v.st.s;
+            const pl = s === 'win' ? (r.v.odds - 1) * STAKE : s === 'loss' ? -STAKE : 0;
+            return `<tr class="st-${s}">
+              <td><a href="#/match/${r.slug}/${r.id}">${esc(r.home)} — ${esc(r.away)}</a><small>${esc(dateOf(r.ts))} · ${esc(leagueLabel(r.slug))}</small></td>
+              <td><b>${esc(r.v.short)}</b> @ ${r.v.odds.toFixed(2)}<small>${pct(r.v.p)} · перевага +${(r.v.edge * 100).toFixed(0)}%</small></td>
+              <td><b>${esc(r.v.st.score || '')}</b> ${STATUS_ICON[s] || ''}<small>${esc(outcomeOf(r) || '')}</small></td>
+              <td class="${pl > 0 ? 'ok' : pl < 0 ? 'bad' : ''}">${s === 'void' ? '↺ 0' : uah(pl)}</td>
+            </tr>`;
+          }).join('')}</tbody>
+          <tfoot><tr><td>Разом: ${w} з ${done.filter(r => DONE(r.v.st.s)).length}</td><td></td><td></td><td class="${total >= 0 ? 'ok' : 'bad'}">${uah(total)}</td></tr></tfoot>
+        </table>
+        <p class="hint">«Результат» — фінальний рахунок і що зіграло в матчі: П1 / нічия / П2 і тотал 2.5. Ставка — 50 грн за кф DraftKings.</p>
+      </section>`;
+  }
+
   function valueHtml() {
     const rows = valueRows();
     const done = rows.filter(r => DONE(r.v.st.s));
@@ -1115,7 +1101,8 @@
             <div class="hrow-st">${r.v.st.s === 'live' ? '<span class="live">LIVE</span>' : ''}</div>
           </a>`).join('')}</section>` : '';
       })()}
-      ${days ? `<section class="card"><h3>По днях</h3>${days}</section>` : (rows.length ? '' : '<div class="empty">За цей період цінних ставок ще немає.<br>Вони з\'являються, коли кф DraftKings вищий, ніж має бути за прогнозом.</div>')}`;
+      ${valueResultsTable(rows)}
+      ${rows.length ? '' : '<div class="empty">За цей період цінних ставок ще немає.<br>Вони з\'являються, коли кф DraftKings вищий, ніж має бути за прогнозом.</div>'}`;
   }
 
   // Таблиця «зіграло / очікувалось / прибуток / ROI» для груп ставок. kOf — кф ставки
@@ -1136,45 +1123,6 @@
     for (const x of list) { const k = key(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); }
     return [...m].sort((a, b) => b[1].length - a[1].length);
   };
-
-  function picksHtml() {
-    const rows = withStatuses('picks');
-    const all = rows.flatMap(r => r.items);
-    const done = all.filter(x => DONE(x.st.s));
-    const wins = done.filter(x => x.st.s === 'win').length;
-    const exp = done.length ? done.reduce((s, x) => s + x.p, 0) / done.length : null;
-    const groups = Object.values(model.GROUPS).map(g => {
-      const list = done.filter(x => x.group === g);
-      return rateRow(g, list.filter(x => x.st.s === 'win').length, list.length,
-        list.length ? list.reduce((s, x) => s + x.p, 0) / list.length : null);
-    }).join('');
-    const nodata = all.filter(x => x.st.s === 'nodata').length;
-    const days = dayList(rows, x => x.short);
-    return `
-      <section class="card">
-        <div class="kpis">
-          <div><b>${pctOf(wins, done.length)}</b><span>варіантів зіграло<br>${wins} з ${done.length}</span></div>
-          <div><b>${exp != null ? Math.round(exp * 100) + '%' : '—'}</b><span>очікувалось<br>за прогнозом</span></div>
-          <div><b>${rows.length}</b><span>матчів<br>у статистиці</span></div>
-        </div>
-        ${nodata ? `<p class="hint">Не розраховано ${nodata} рекомендацій на 1-й тайм, кутові чи картки: потрібної статистики цих матчів немає.</p>` : ''}
-      </section>
-      ${done.length ? `<section class="card">
-        <h3>За групами ринків</h3>
-        ${groups}
-        <p class="hint">Рекомендація в кожній групі — як у блоці «Рекомендації за ринками» на екрані матчу. Риска — скільки мало зіграти за прогнозом. Кутові 1-го тайму розраховуються лише там, де ESPN веде повний текстовий коментар матчу.</p>
-      </section>
-      <section class="card">
-        <h3>За рівнем впевненості</h3>
-        ${[3, 2, 1].map(l => {
-          const list = done.filter(x => x.level === l);
-          return rateRow(`${['', 'Низька', 'Середня', 'Висока'][l]} впевненість`, list.filter(x => x.st.s === 'win').length, list.length,
-            list.length ? list.reduce((s, x) => s + x.p, 0) / list.length : null);
-        }).join('')}
-      </section>
-      <section class="card"><h3>За чемпіонатами</h3>${statTable('Чемпіонат', groupBy(rows.flatMap(r => r.items.map(x => ({ ...x, slug: r.slug }))).filter(x => DONE(x.st.s)), x => leagueLabel(x.slug)), x => 1 / x.p)}</section>` : ''}
-      ${days ? `<section class="card"><h3>По днях</h3>${days}</section>` : '<div class="empty">За цей період ще немає зіграних матчів.</div>'}`;
-  }
 
   function singlesHtml() {
     const rows = singlesData();
@@ -1281,21 +1229,14 @@
     const singles = singlesData();
     const tips = singles.map(r => ({ ...r.tip, st: r.tipSt }));
     const values = singles.filter(r => r.value).map(r => ({ ...r.value, st: r.valSt }));
-    const picks = withStatuses('picks').flatMap(r => r.items);
-    const fairK = x => 1 / x.p;
 
     const summary = [
       row('Основні ставки', agg(tips, x => x.odds || 1 / x.p)),
       row('Цінні ставки (кф DraftKings)', agg(values, x => x.odds)),
-      row('Найкращі ставки за ринками', agg(picks, fairK)),
     ].join('');
 
     const byLevel = [3, 2, 1].map(l => row(`${['', 'Низька', 'Середня', 'Висока'][l]} впевненість`,
       agg(tips.filter(t => t.level === l), x => x.odds || 1 / x.p))).join('');
-    const byGroup = Object.values(model.GROUPS).map(g => {
-      const a = agg(picks.filter(x => x.group === g), fairK);
-      return a.n ? row(g, a) : '';
-    }).join('');
 
     const journal = singles.filter(r => DONE(r.tipSt.s)).slice(0, 200).map(r => `
       <tr><td>${esc(FP.dateOfTs(r.ts).split('-').reverse().join('.'))}</td><td>${esc(leagueLabel(r.slug))}</td>
@@ -1344,7 +1285,6 @@
         ${table(H, [[0.03, 0.06, 'Перевага 3–6%'], [0.06, 0.10, 'Перевага 6–10%'], [0.10, 9, 'Перевага від 10%']]
           .map(([lo, hi, l]) => row(l, agg(values.filter(v => v.p * v.odds - 1 >= lo && v.p * v.odds - 1 < hi), x => x.odds))).join('')
           + row('Усі цінні ставки', agg(values, x => x.odds)))}
-        ${byGroup ? `<h2>Найкращі ставки за ринками</h2>${table(H, byGroup)}` : ''}
         ${journal ? `<h2>Журнал основних ставок</h2>${table(['Дата', 'Турнір', 'Матч', 'Рахунок', 'Ставка', 'Ймов.', ''], journal)}` : ''}
         <p class="note">«Очікувалось» — середня ймовірність за прогнозом додатка. Прибуток — при ставці 1 од. на кожну рекомендацію: для основних і цінних ставок за кф DraftKings, якщо він був, інакше за справедливим кф; у вашого букмекера кф зазвичай на 5–8% нижчий. Прогнози ймовірнісні та не гарантують виграшу. 18+.</p>
       </div>`;
@@ -1397,27 +1337,19 @@
           STAKE, RES[b.s] || 'немає даних', DONE(b.s) || b.s === 'void' ? num(b.profit) : '']);
       }
     } else if (tab === 'value') {
-      rows = [['Дата', 'Час', 'Турнір', 'Господарі', 'Гості', 'Рахунок', 'Цінна ставка', 'Ймовірність', 'Кф DraftKings', 'Перевага', 'Результат', 'Прибуток, од.']];
+      rows = [['Дата', 'Час', 'Турнір', 'Господарі', 'Гості', 'Рахунок', 'Що зіграло', 'Цінна ставка', 'Ймовірність', 'Кф DraftKings', 'Перевага', 'Результат', 'Прибуток, грн']];
       for (const r of valueRows()) {
         const s = r.v.st.s;
-        rows.push([FP.dateOfTs(r.ts), timeOf(r.ts), leagueLabel(r.slug), r.home, r.away, r.v.st.score || '', r.v.short,
+        rows.push([FP.dateOfTs(r.ts), timeOf(r.ts), leagueLabel(r.slug), r.home, r.away, r.v.st.score || '', outcomeOf(r) || '', r.v.short,
           num(r.v.p), num(r.v.odds), num(r.v.edge), RES[s] || 'немає даних',
-          s === 'win' ? num(r.v.odds - 1) : s === 'loss' ? '-1' : '']);
-      }
-    } else {
-      rows = [['Дата', 'Час', 'Турнір', 'Господарі', 'Гості', 'Рахунок', 'Група ринків', 'Ставка', 'Ймовірність', 'Кф (справедливий)', 'Результат']];
-      for (const r of withStatuses('picks')) {
-        for (const x of r.items) {
-          rows.push([FP.dateOfTs(r.ts), timeOf(r.ts), leagueLabel(r.slug), r.home, r.away, x.st.score || '',
-            x.group, x.short, num(x.p), num(1 / x.p), RES[x.st.s] || 'немає даних']);
-        }
+          s === 'win' ? num((r.v.odds - 1) * STAKE) : s === 'loss' ? -STAKE : '']);
       }
     }
     const csv = '﻿' + rows.map(r => r.map(cell).join(';')).join('\r\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `statystyka-${{ bank: 'rakhunok', singles: 'osnovni', value: 'cinni', picks: 'za-rynkamy' }[tab]}-${FP.localDate(0)}.csv`;
+    a.download = `statystyka-${{ bank: 'rakhunok', singles: 'osnovni', value: 'cinni' }[tab]}-${FP.localDate(0)}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -1473,7 +1405,7 @@
           <li>З очікуваних голів модель Пуассона з поправкою Діксона–Коулза рахує ймовірність кожного рахунку, а з них — ймовірності всіх ринків.</li>
           <li>Якщо є коефіцієнти букмекера, ймовірності поєднуються: 30% модель + 70% ринок.</li>
           <li>Кутові й картки рахуються окремою моделлю за сезонною статистикою команд, тож це орієнтовна оцінка: вона не знає ні суддю, ні тактику на конкретний матч.</li>
-          <li>Перший тайм рахується за середньою часткою: близько 44% голів і кутових та 35% жовтих карток матчу.</li>
+          <li>Перший тайм рахується за середньою часткою: близько 44% голів і кутових матчу.</li>
           <li>Модель відкалібровано на 1091 зіграному матчі 25 чемпіонатів (прогноз за даними до гри): виправлено недооцінку голів, уточнено розкид кутових і карток, неефективні ринки прибрано. ${help('calib')}</li>
           <li>Вкладка «Статистика» показує, скільки прогнозів додатка справді зіграло.</li>
         </ul>

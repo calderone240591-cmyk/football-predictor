@@ -26,8 +26,6 @@ FP.history = (() => {
       value: pred.value ? { key: pred.value.key, short: pred.value.short, p: r3(pred.value.p), odds: pred.value.odds } : null,
       // Ймовірності 1X2 на момент старту — щоб картка матчу, що почався, не перераховувалась.
       probs: { p1: r3(pred.prob['1']), px: r3(pred.prob.X), p2: r3(pred.prob['2']) },
-      // Рекомендації за ринками (по групах) з рівнем впевненості.
-      picks: pred.groups.filter(g => g.pick).map(g => ({ group: g.name, key: g.pick.key, short: g.pick.short, p: r3(g.pick.p), level: g.pick.conf.level })),
     };
   }
 

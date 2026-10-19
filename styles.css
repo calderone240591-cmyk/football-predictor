@@ -531,3 +531,12 @@ a.acca-row { color: inherit; text-decoration: none; }
 .mrec-all span { font-size: 12px; padding: 4px 8px; border-radius: 8px; background: var(--surface-2); color: var(--muted); }
 .mrec-all span b { color: var(--text, inherit); }
 .mrec-all span.on { outline: 1.5px solid var(--accent); color: inherit; }
+
+/* Цінні ставки: прогноз / ставка = результат */
+.vres td { vertical-align: top; }
+.vres td small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.vres td a { color: inherit; text-decoration: none; font-weight: 600; }
+.vres td:last-child, .vres th:last-child { text-align: right; white-space: nowrap; }
+.vres tr.st-loss td:nth-child(2) b { color: var(--lo); }
+.vres tr.st-win td:nth-child(2) b { color: var(--hi); }
+.vres tfoot td { font-weight: 700; border-top: 1.5px solid var(--line); }

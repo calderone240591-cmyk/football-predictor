@@ -20,10 +20,9 @@ FP.model = (() => {
   const MARKET_WEIGHT = 0.7;  // ринок зазвичай точніший за чисту статистику
   const XG_WEIGHT = 0.4;      // частка xG в рейтингах, коли xG доступний
   const FIRST_HALF_SHARE = 0.44;
-  const MIN_TIP_ODDS = 2.01;  // основні ставки — кф від 2.01 до 4.00
-  const MAX_TIP_ODDS = 4.00;
+  const MIN_TIP_ODDS = 2.01;  // основні ставки — кф від 2.01
   const VALUE_EDGE = 0.03;    // мінімальна перевага над букмекером, щоб назвати ставку цінною
-  const MAX_PICK_P = 0.75;    // рекомендації за ринками — з ймовірністю до 75% (кф від 1.33)
+  const MIN_VALUE_ODDS = 1.51; // цінні ставки — кф букмекера від 1.51
 
   const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 
@@ -247,11 +246,12 @@ FP.model = (() => {
 
   // ---------- ринки ----------
   // Ринки за рахунком основного часу. hit(h, a) → true / false / null (повернення ставки).
-  // Набір ринків: результат (П1, Х, П2, 1X, X2), тотал 2.5, голи 1-го тайму, фори,
-  // кутові (матч і 1-й тайм), жовті картки (матч і 1-й тайм).
+  // Набір ринків: П1, П2, 1X, X2, фори (0, ±1, ±1.5, ±2.5), тотал голів (1.5 / 2.5 / 3.5),
+  // ТБ голів 1-го тайму, кутові (матч і 1-й тайм), жовті картки матчу, червоні картки матчу.
+  // Нічия рахується (потрібна для ймовірностей 1X2), але не рекомендується.
   const G = {
-    RES: 'Результат', TOT: 'Тотал голів', HT: 'Голи 1-й тайм', HCP: 'Фори',
-    CORN: 'Кутові', CORN1: 'Кутові 1-й тайм', CARD: 'Жовті картки', CARD1: 'Жовті картки 1-й тайм',
+    RES: 'Результат', HCP: 'Фори', TOT: 'Тотал голів', HT: 'Голи 1-й тайм',
+    CORN1: 'Кутові 1-й тайм', CORN: 'Кутові', CARD: 'Жовті картки', RED: 'Червоні картки',
   };
 
   const SCORE_MARKETS = [
@@ -261,8 +261,12 @@ FP.model = (() => {
     ['1X', G.RES, '1X', 'Господарі не програють (1X)', (h, a) => h >= a],
     ['X2', G.RES, 'X2', 'Гості не програють (X2)', (h, a) => h <= a],
 
+    ['O15', G.TOT, 'ТБ 1.5', 'Тотал більше 1.5', (h, a) => h + a >= 2],
+    ['U15', G.TOT, 'ТМ 1.5', 'Тотал менше 1.5', (h, a) => h + a <= 1],
     ['O25', G.TOT, 'ТБ 2.5', 'Тотал більше 2.5', (h, a) => h + a >= 3],
     ['U25', G.TOT, 'ТМ 2.5', 'Тотал менше 2.5', (h, a) => h + a <= 2],
+    ['O35', G.TOT, 'ТБ 3.5', 'Тотал більше 3.5', (h, a) => h + a >= 4],
+    ['U35', G.TOT, 'ТМ 3.5', 'Тотал менше 3.5', (h, a) => h + a <= 3],
 
     // Фори 0 і ±1 — з поверненням ставки (null): Ф1 (0) при нічиїй, Ф1 (−1) при перемозі в один м'яч тощо.
     ['H0', G.HCP, 'Ф1 (0)', 'Фора господарів 0 (при нічиїй — повернення)', (h, a) => (h === a ? null : h > a)],
@@ -283,8 +287,8 @@ FP.model = (() => {
 
   const MARKET_BY_KEY = new Map(SCORE_MARKETS.map(m => [m.key, m]));
 
-  // Ринки, з яких обирається основна рекомендація.
-  const TIP_GROUPS = new Set([G.RES, G.TOT, G.HCP, G.HT]);
+  // Ринки, які не рекомендуються (рахуються лише для ймовірностей).
+  const NOT_RECOMMENDED = new Set(['X']);
 
   // Ймовірність ринку з урахуванням повернень: P(виграш) / P(не повернення).
   function scoreMarketProb(g, mk) {
@@ -299,7 +303,7 @@ FP.model = (() => {
     return push > 0 ? win / (1 - push) : win;
   }
 
-  // Голи 1-го тайму: Пуассон з часткою 44% очікуваних голів матчу.
+  // ТБ голів 1-го тайму: Пуассон з часткою 44% очікуваних голів матчу.
   function halfMarkets(lh, la) {
     const p1 = poissonPmf((lh + la) * FIRST_HALF_SHARE, 12);
     return [
@@ -308,11 +312,10 @@ FP.model = (() => {
     ];
   }
 
-  // Частки 1-го тайму виміряно на 98 зіграних матчах (жовтень 2026): кутові — 44%, жовті картки — 35%.
+  // Частку 1-го тайму виміряно на 98 зіграних матчах (жовтень 2026): кутові — 44%.
   const CORNERS_1H_SHARE = 0.44;
-  const CARDS_1H_SHARE = 0.35;
 
-  // Кутові й картки за сезонною статистикою команд (stats: { app, cornersFor, cornersAgainst, yellow }).
+  // Кутові й картки за сезонною статистикою команд (stats: { app, cornersFor, cornersAgainst, yellow, red }).
   function cornersCards(hs, as) {
     if (!hs || !as || !hs.app || !as.app) return null;
     const shrink = (v, n, prior, k = 3) => (v * n + prior * k) / (n + k);
@@ -324,23 +327,24 @@ FP.model = (() => {
     const corners1 = negBinPmf((ch + ca) * CORNERS_1H_SHARE, CORNERS_DISP, 20);
     const yh = shrink(hs.yellow / hs.app, hs.app, 2.0) * TUNE.cards, ya = shrink(as.yellow / as.app, as.app, 2.0) * TUNE.cards;
     const cardsTotal = negBinPmf(yh + ya, CARDS_DISP, 20);
-    const cards1 = negBinPmf((yh + ya) * CARDS_1H_SHARE, CARDS_DISP, 12);
+    // Червоні картки рідкісні (≈ 0.2 за матч): сильне згладжування до середнього 0.1 на команду.
+    const rh = shrink((hs.red || 0) / hs.app, hs.app, 0.1, 10), ra = shrink((as.red || 0) / as.app, as.app, 0.1, 10);
+    const pRed = 1 - Math.exp(-(rh + ra));
 
     const out = [];
-    const both = (pmf, key, group, label, lines) => {
+    const both = (pmf, key, group, label, lines, suffix = '') => {
       for (const line of lines) {
         const o = tailOver(pmf, line);
-        out.push({ key: `${key}O${line}`, group, short: `${label} ТБ ${line}`, long: `${group}: більше ${line}`, p: o });
-        out.push({ key: `${key}U${line}`, group, short: `${label} ТМ ${line}`, long: `${group}: менше ${line}`, p: 1 - o });
+        out.push({ key: `${key}O${line}`, group, short: `${label} ТБ ${line}${suffix}`, long: `${group}: більше ${line}`, p: o });
+        out.push({ key: `${key}U${line}`, group, short: `${label} ТМ ${line}${suffix}`, long: `${group}: менше ${line}`, p: 1 - o });
       }
     };
+    both(corners1, 'C1', G.CORN1, 'Кут.', [3.5, 4.5, 5.5], ' 1-й т.');
     both(cornersTotal, 'C', G.CORN, 'Кут.', [7.5, 8.5, 9.5, 10.5, 11.5, 12.5]);
-    for (const line of [3.5, 4.5]) {
-      out.push({ key: `C1O${line}`, group: G.CORN1, short: `Кут. ТБ ${line} 1-й т.`, long: `Кутові в 1-му таймі: більше ${line}`, p: tailOver(corners1, line) });
-    }
     both(cardsTotal, 'Y', G.CARD, 'ЖК', [2.5, 3.5, 4.5, 5.5]);
-    both(cards1, 'Y1', G.CARD1, 'ЖК 1-й т.', [0.5, 1.5, 2.5]);
-    return { markets: out, corners: { home: ch, away: ca }, cards: { home: yh, away: ya } };
+    out.push({ key: 'RO0.5', group: G.RED, short: 'Червона — так', long: 'У матчі буде червона картка', p: pRed });
+    out.push({ key: 'RU0.5', group: G.RED, short: 'Червона — ні', long: 'У матчі не буде червоної картки', p: 1 - pRed });
+    return { markets: out, corners: { home: ch, away: ca }, cards: { home: yh, away: ya }, red: rh + ra };
   }
 
   // Які ринки мають коефіцієнт букмекера.
@@ -407,31 +411,22 @@ FP.model = (() => {
     // Мало даних — лише коли немає ні минулого сезону, ні (для єврокубків) рейтингу в чемпіонаті.
     const solid = m.previous || (m.league.cup && H.domestic && A.domestic);
     const minPlayed = solid ? 99 : Math.min(H.stats.p, A.stats.p);
-    // Основна ставка — найімовірніший ринок з кф від 2.01 до 4.00: кф букмекера, якщо він є,
-    // інакше справедливий (ймовірність приблизно 25–50%).
+    // Основна ставка — найімовірніший з усіх ринків з кф від 2.01: кф букмекера, якщо він є,
+    // інакше справедливий (ймовірність до ~50%).
+    const recommendable = markets.filter(x => !NOT_RECOMMENDED.has(x.key));
     const tipOdds = x => x.odds || 1 / x.p;
-    const inRange = x => tipOdds(x) >= MIN_TIP_ODDS && tipOdds(x) <= MAX_TIP_ODDS;
-    const candidates = markets.filter(x => TIP_GROUPS.has(x.group) && inRange(x));
-    const best = candidates[0] || markets.find(x => TIP_GROUPS.has(x.group) && tipOdds(x) >= MIN_TIP_ODDS);
+    const candidates = recommendable.filter(x => tipOdds(x) >= MIN_TIP_ODDS);
+    const best = candidates[0];
     const tip = { ...best, conf: tipConfidence(best.p, minPlayed) };
-    const alternatives = candidates.filter(x => x.key !== best.key && x.p >= 0.38).slice(0, 3);
-    const valueBets = markets
-      .filter(x => x.edge != null && x.edge >= VALUE_EDGE && x.p >= 0.30)
+    const alternatives = candidates.filter(x => x.key !== best.key && x.group !== best.group && x.p >= 0.38).slice(0, 3);
+    // Цінна ставка — ринок з кф букмекера від 1.51, де наша ймовірність вища за закладену в кф.
+    const valueBets = recommendable
+      .filter(x => x.edge != null && x.odds >= MIN_VALUE_ODDS && x.edge >= VALUE_EDGE && x.p >= 0.30)
       .sort((x, y) => y.edge - x.edge);
-
-    // Рекомендація в кожній групі ринків: найімовірніший варіант із ймовірністю до 75%
-    // (справедливий кф від 1.33 — нижчі коефіцієнти майже нічого не дають), з рівнем
-    // впевненості: висока від 70%, середня 60–70%, низька — нижче 60%.
-    const groups = Object.values(G).map(name => {
-      const list = markets.filter(x => x.group === name);
-      const best = list.find(x => x.p <= MAX_PICK_P) || list[list.length - 1];
-      const pick = best && { ...best, conf: confidence(best.p, minPlayed) };
-      return { name, list, pick };
-    }).filter(x => x.list.length);
 
     return {
       lh, la, model: { lh: mlh, la: mla, ...modelCore }, market, useXg,
-      prob, markets, groups, tip, alternatives,
+      prob, markets, tip, alternatives,
       value: valueBets[0] || null,
       corners: cc && cc.corners, cards: cc && cc.cards,
       lowData: minPlayed < 4, home: H, away: A,
@@ -466,7 +461,7 @@ FP.model = (() => {
       out.push('Коефіцієнтів букмекера немає — прогноз лише за статистикою.');
     }
     if (cc) {
-      out.push(`Очікувано кутових ${f1(cc.corners.home + cc.corners.away)} (${f1(cc.corners.home)} : ${f1(cc.corners.away)}), жовтих карток ${f1(cc.cards.home + cc.cards.away)}.`);
+      out.push(`Очікувано кутових ${f1(cc.corners.home + cc.corners.away)} (${f1(cc.corners.home)} : ${f1(cc.corners.away)}), жовтих карток ${f1(cc.cards.home + cc.cards.away)}, ймовірність червоної картки ${pc(1 - Math.exp(-cc.red))}.`);
     }
     if (m.previous && Math.min(h.p, a.p) < 10) out.push('На початку сезону рейтинги спираються і на минулий сезон (з меншою вагою).');
     if (minPlayed < 4) out.push('Зіграно мало матчів, тож прогноз менш надійний.');
@@ -482,8 +477,8 @@ FP.model = (() => {
   }
 
   // Розрахунок ставки за фінальним рахунком: true / false / null (повернення).
-  // Голи 1-го тайму — за рахунком перерви (ht), кутові й картки матчу — за статистикою (box),
-  // кутові й картки 1-го тайму — за подіями матчу (c1, y1).
+  // Голи 1-го тайму — за рахунком перерви (ht), кутові й жовті матчу — за статистикою (box),
+  // кутові 1-го тайму — за коментарем матчу (c1), червоні — за статистикою (red).
   // undefined — розрахувати неможливо (немає потрібних даних).
   function settle(key, h, a, extra) {
     const mk = MARKET_BY_KEY.get(key);
@@ -494,12 +489,12 @@ FP.model = (() => {
       if (key === 'HTO05') return g1 >= 1;
       if (key === 'HTO15') return g1 >= 2;
     }
-    const m = /^(C1|Y1|C|Y)([OU])([\d.]+)$/.exec(key);
+    const m = /^(C1|Y1|C|Y|R)([OU])([\d.]+)$/.exec(key);
     if (!m) return undefined;
     const value = {
       C: box && box.homeCorners + box.awayCorners,
       Y: box && box.homeYellow + box.awayYellow,
-      C1: extra && extra.c1, Y1: extra && extra.y1,
+      C1: extra && extra.c1, Y1: extra && extra.y1, R: extra && extra.red,
     }[m[1]];
     if (value == null) return undefined;
     return m[2] === 'O' ? value > +m[3] : value < +m[3];

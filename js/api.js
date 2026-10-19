@@ -237,7 +237,7 @@ FP.api = (() => {
   // а також кутові (c1) і жовті картки (y1) першого тайму. Матч уже не зміниться, тож кешуємо надовго.
   const minuteOf = dv => { const m = /^(\d+)/.exec(dv || ''); return m ? +m[1] : null; };
   function matchFacts(slug, eventId) {
-    return cached(`mf2:${eventId}`, 60 * 24 * 60 * MIN, `${SITE}${slug}/summary?event=${eventId}`, d => {
+    return cached(`mf3:${eventId}`, 60 * 24 * 60 * MIN, `${SITE}${slug}/summary?event=${eventId}`, d => {
       const comp = d.header && d.header.competitions && d.header.competitions[0];
       const side = ha => (comp ? comp.competitors.find(c => c.homeAway === ha) : null);
       const h = side('home'), a = side('away');
@@ -250,6 +250,8 @@ FP.api = (() => {
       const ht = first(h) != null && first(a) != null ? { home: first(h), away: first(a) } : null;
       const hc = h && stat(h.id, 'wonCorners'), ac = a && stat(a.id, 'wonCorners');
       const hy = h && stat(h.id, 'yellowCards'), ay = a && stat(a.id, 'yellowCards');
+      const hr = h && stat(h.id, 'redCards'), ar = a && stat(a.id, 'redCards');
+      const red = [hr, ar].every(v => v != null && !isNaN(v)) ? hr + ar : null;
       const box = [hc, ac, hy, ay].every(v => v != null && !isNaN(v))
         ? { homeCorners: hc, awayCorners: ac, homeYellow: hy, awayYellow: ay } : null;
       // Кутові 1-го тайму — з текстового коментаря («Corner, …» з хвилиною; 45'+2' — ще 1-й тайм).
@@ -261,7 +263,7 @@ FP.api = (() => {
       const ke = d.keyEvents || [];
       const y1 = ke.some(k => k.type && k.type.type === 'halftime')
         ? ke.filter(k => k.type && k.type.type === 'yellow-card' && k.period && k.period.number === 1).length : null;
-      return { ht, box, c1, y1 };
+      return { ht, box, c1, y1, red };
     });
   }
 
