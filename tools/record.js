@@ -1,5 +1,5 @@
-// Серверний журнал прогнозів. Запускається GitHub Actions кожні 20 хвилин (.github/workflows/journal.yml):
-// рахує передматчеві прогнози всіх матчів найближчих 36 годин тим самим кодом, що й додаток
+// Серверний журнал прогнозів. Запускається GitHub Actions кожні 15 хвилин (.github/workflows/journal.yml):
+// рахує передматчеві прогнози всіх матчів найближчих 48 годин тим самим кодом, що й додаток
 // (js/config.js, js/api.js, js/model.js, js/history.js), і оновлює їх до самого старту.
 // Журнал лежить у гілці journal; телефон і браузер читають його, тож статистика в них однакова.
 //
@@ -11,7 +11,7 @@ const vm = require('vm');
 const ROOT = path.join(__dirname, '..');
 const OUT = process.argv[2] || 'journal.json';
 const CACHE = process.argv[3] || null;
-const WINDOW_H = 36;
+const WINDOW_H = 48;
 const KEEP_DAYS = 60;
 
 // ---------- середовище браузера, якого потребують файли додатка ----------
