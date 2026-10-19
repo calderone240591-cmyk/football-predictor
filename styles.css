@@ -540,3 +540,10 @@ a.acca-row { color: inherit; text-decoration: none; }
 .vres tr.st-loss td:nth-child(2) b { color: var(--lo); }
 .vres tr.st-win td:nth-child(2) b { color: var(--hi); }
 .vres tfoot td { font-weight: 700; border-top: 1.5px solid var(--line); }
+
+/* Основна й цінна ставка в картці матчу на головній */
+.m-pred .tip { display: block; white-space: normal; text-align: right; max-width: 100%; line-height: 1.35; }
+.tip small { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; opacity: .75; }
+.tip.val { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+.vrow > a b small.v-edge { margin: 0; font-size: 11px; color: var(--muted); font-weight: 600; }
+@media (max-width: 420px) { .vrow > a b small.v-edge { display: none; } }

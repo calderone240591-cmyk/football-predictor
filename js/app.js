@@ -362,7 +362,7 @@
           return `<div class="acca-row vrow ${on ? 'sel' : ''}">
             <a href="#/match/${x.slug}/${x.ev.id}">
               <span><small>${status(x)}</small> ${esc(x.ev.home.short || x.ev.home.name)} — ${esc(x.ev.away.short || x.ev.away.name)}</span>
-              <b>${esc(x.v.short)} @ ${x.v.odds.toFixed(2)} · +${(x.v.edge * 100).toFixed(0)}%</b>
+              <b>${esc(x.v.short)} @ ${x.v.odds.toFixed(2)} · ${pct(x.v.p)}<small class="v-edge"> · перевага +${(x.v.edge * 100).toFixed(0)}%</small></b>
             </a>
             ${canPick(x) ? `<button class="add ${on ? 'on' : ''}" data-vsel="${esc(x.ev.id)}" aria-label="Обрати для двійників">${on ? '✓' : '+'}</button>` : '<span class="add-stub"></span>'}
           </div>`;
@@ -481,15 +481,20 @@
     else if (!sp || !sp.prob) predHtml = '<div class="pred-loading">недостатньо даних</div>';
     else {
       const p = sp.prob;
-      const r = isFinished(ev) ? model.settle(sp.tip.key, ev.home.score, ev.away.score) : undefined;
-      const verdict = r === true ? '<i class="ok">✓</i>' : r === false ? '<i class="bad">✗</i>' : r === null ? '↺ ' : '';
+      const mark = key => {
+        const r = isFinished(ev) ? model.settle(key, ev.home.score, ev.away.score, state.facts.get(ev.id)) : undefined;
+        return r === true ? '<i class="ok">✓</i> ' : r === false ? '<i class="bad">✗</i> ' : r === null ? '↺ ' : '';
+      };
+      const tipK = sp.tip.odds || 1 / sp.tip.p;
+      const v = sp.value;
       predHtml = `
         <div class="bar" aria-label="Ймовірності: П1 ${pct(p['1'])}, нічия ${pct(p.X)}, П2 ${pct(p['2'])}">
           <span class="b1" style="flex:${p['1']}">${pct(p['1'])}</span>
           <span class="bx" style="flex:${p.X}">${pct(p.X)}</span>
           <span class="b2" style="flex:${p['2']}">${pct(p['2'])}</span>
         </div>
-        <div class="tip ${confClass(sp.tip.conf)}">${verdict}${esc(sp.tip.short)} · ${pct(sp.tip.p)}</div>`;
+        <div class="tip ${confClass(sp.tip.conf)}"><small>Основна</small> ${mark(sp.tip.key)}${esc(sp.tip.short)} · ${pct(sp.tip.p)} · кф ${tipK.toFixed(2)}</div>
+        ${v ? `<div class="tip val"><small>Цінна</small> ${mark(v.key)}${esc(v.short)} · ${pct(v.p)} · кф ${v.odds.toFixed(2)}</div>` : ''}`;
     }
     const l = LEAGUE_BY_SLUG.get(slug);
     const badges = isFinished(ev) ? '' : [
