@@ -1,4 +1,4 @@
-// «Сухі серії»: команди, що не забивають у чемпіонаті 3 матчі поспіль і більше.
+// «Сухі серії»: команди, що не забивають у чемпіонаті 2 матчі поспіль і більше.
 //
 // Рекомендація — індивідуальний тотал такої команди в її наступному матчі:
 //   • ІТБ 1 (азійський): 2+ голи — виграш, рівно 1 — повернення ставки, 0 — програш;
@@ -9,16 +9,17 @@
 (() => {
   const { api, model, LEAGUES, LEAGUE_BY_SLUG } = FP;
   const DOMESTIC = LEAGUES.filter(l => !l.cup);   // лише чемпіонати: «тури» є тільки в лігах
-  const MIN_STREAK = 3;
+  const MIN_STREAK = 2;
   const STAKE = 50;
   const BANK = 5000;
-  const LAUNCH = Date.parse('2026-10-20T00:00:00+03:00') / 1000;   // запуск додатка
+  // Облік із нуля: статистика й зіграні рекомендації — лише для матчів, що почались після запуску.
+  const LAUNCH = Date.parse('2026-10-20T20:30:00+03:00') / 1000;
   const REFRESH = 5 * 60 * 1000;
   const VOID = /POSTPONED|CANCELED|ABANDONED/;
 
   const $view = document.getElementById('view');
   const $title = document.getElementById('title');
-  const state = { data: null, loadedAt: 0, loading: null, period: 'season' };
+  const state = { data: null, loadedAt: 0, loading: null, period: 'all' };
   let renderId = 0;
 
   // ---------- утиліти ----------
@@ -203,18 +204,23 @@
       </section>`;
   }
 
-  function renderRecs(d) {
+  const HORIZON = 10 * 86400;
+  // Найближчий матч кожної «сухої» команди: після нього серія або перерветься, або подовжиться.
+  function upcomingRecs(d) {
     const now = Date.now() / 1000;
-    const HORIZON = 10 * 86400;
-    // Лише найближчий матч кожної команди: після нього серія або перерветься, або подовжиться.
     const next = new Map();
     for (const r of d.recs) {
       if (r.done || r.ev.ts > now + HORIZON) continue;
       const have = next.get(r.team.id);
       if (!have || r.ev.ts < have.ev.ts) next.set(r.team.id, r);
     }
-    const upcoming = [...next.values()].sort((a, b) => a.ev.ts - b.ev.ts || b.n - a.n);
-    const recent = d.recs.filter(r => r.done && r.ev.ts > now - 3 * 86400).sort((a, b) => b.ev.ts - a.ev.ts);
+    return [...next.values()].sort((a, b) => a.ev.ts - b.ev.ts || b.n - a.n);
+  }
+
+  function renderRecs(d) {
+    const now = Date.now() / 1000;
+    const upcoming = upcomingRecs(d);
+    const recent = d.recs.filter(r => r.done && r.ev.ts >= LAUNCH && r.ev.ts > now - 3 * 86400).sort((a, b) => b.ev.ts - a.ev.ts);
     const analyzed = d.events.filter(x => !model.isResult(x.ev) && !VOID.test(x.ev.status) && x.ev.ts < now + HORIZON).length;
     const byDay = new Map();
     for (const r of upcoming) {
@@ -249,16 +255,15 @@
             <td><b class="dr-n">${r.n}</b><small>${r.lastGoal ? `гол ${dateOf(r.lastGoal)}` : 'без голів'}</small></td>
             <td>${nx ? `${esc(nx.home.id === r.team.id ? 'vs' : '@')} ${esc(opp.short || opp.name)}<small>${dateOf(nx.ts)} ${timeOf(nx.ts)}</small>` : '<small>немає в розкладі</small>'}</td>
           </tr>`;
-        }).join('')}</tbody></table></section>` : '<div class="empty">Зараз немає команд із серією без голів від 3 матчів.</div>'}
+        }).join('')}</tbody></table></section>` : `<div class="empty">Зараз немає команд із серією без голів від ${MIN_STREAK} матчів.</div>`}
       <p class="hint pad">«vs» — удома, «@» — у гостях. Серія рахується за матчами чемпіонату (з урахуванням кінця минулого сезону).</p>`;
   }
 
   // ---------- Статистика ----------
-  const PERIODS = [['season', 'Сезон'], ['30', '30 днів'], ['launch', 'Від 20.10']];
+  const PERIODS = [['all', 'Увесь час'], ['7', '7 днів'], ['30', '30 днів']];
   function inPeriod(ts) {
-    if (state.period === 'launch') return ts >= LAUNCH;
-    if (state.period === '30') return ts * 1000 >= Date.now() - 30 * 864e5;
-    return true;
+    if (ts < LAUNCH) return false;
+    return state.period === 'all' || ts * 1000 >= Date.now() - Number(state.period) * 864e5;
   }
 
   function balanceChart(settled) {
@@ -297,15 +302,15 @@
     const all = recs.flatMap(betsOf);
     const profit = all.reduce((s, b) => s + b.profit, 0);
     const wins = all.filter(b => b.s === 'win').length, losses = all.filter(b => b.s === 'loss').length;
-    const pending = d.recs.filter(r => !r.done && r.ev.ts * 1000 < Date.now() + 3 * 864e5).length;
+    const pending = upcomingRecs(d).length;
     const head = `
       <div class="controls"><div class="chips">${PERIODS.map(([k, l]) => `<button class="chip ${state.period === k ? 'on' : ''}" data-period="${k}">${l}</button>`).join('')}</div></div>`;
     if (!recs.length) {
-      $view.innerHTML = head + `<div class="empty">За цей період ще немає зіграних рекомендацій.<br>В очікуванні: ${pending}.</div>`;
+      $view.innerHTML = head + `<div class="empty">Статистика ведеться з нуля — з 20.10 20:30.<br>Зіграних рекомендацій ще немає, в очікуванні: ${pending}.<br>Результати з'являться після перших матчів.</div>`;
       return;
     }
 
-    const byStreak = [[3, 3, '3 матчі'], [4, 4, '4 матчі'], [5, 5, '5 матчів'], [6, 99, '6+ матчів']]
+    const byStreak = [[2, 2, '2 матчі'], [3, 3, '3 матчі'], [4, 4, '4 матчі'], [5, 99, '5+ матчів']]
       .map(([lo, hi, label]) => ({ label, list: all.filter(b => b.r.n >= lo && b.r.n <= hi) })).filter(x => x.list.length);
     const leagues = new Map();
     for (const b of all) { const k = leagueLabel(b.r.slug); if (!leagues.has(k)) leagues.set(k, []); leagues.get(k).push(b); }
@@ -331,7 +336,7 @@
           <div><b>${wins} / ${losses}</b><span>виграно / програно<br>рекомендацій ${recs.length}</span></div>
         </div>
         ${balanceChart(all)}
-        <p class="hint">На кожну рекомендацію — дві ставки по 50 грн: ІТБ 1 і ІТБ 1.5. Кф — справедливий за ймовірністю моделі; у букмекера він на 5–8% нижчий, тож реальний результат був би гіршим.${state.period === 'season' ? ' «Сезон» — перевірка правила на всіх зіграних турах цього сезону.' : ''}</p>
+        <p class="hint">На кожну рекомендацію — дві ставки по 50 грн: ІТБ 1 і ІТБ 1.5. Кф — справедливий за ймовірністю моделі; у букмекера він на 5–8% нижчий, тож реальний результат був би гіршим. Облік — з 20.10 20:30: лише нові рекомендації.</p>
       </section>
       <section class="card"><h3>За ставками</h3>
         <table class="markets dr-agg">${aggHead('Ставка')}<tbody>${aggRow('ІТБ 1', all.filter(b => b.key === 'it1'))}${aggRow('ІТБ 1.5', all.filter(b => b.key === 'it15'))}${aggRow('Разом', all)}</tbody></table>
