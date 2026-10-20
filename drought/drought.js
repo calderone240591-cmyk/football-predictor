@@ -374,8 +374,6 @@
       { r, key: 'it15', label: 'ІТБ 1.5', p: r.it15.p, s: r.st15, profit: profitOf(r.st15, r.it15.p) },
     ];
     const all = recs.flatMap(betsOf);
-    const profit = all.reduce((s, b) => s + b.profit, 0);
-    const wins = all.filter(b => b.s === 'win').length, losses = all.filter(b => b.s === 'loss').length;
     const pending = upcomingRecs(d).length;
     const head = `
       <div class="controls"><div class="chips">${PERIODS.map(([k, l]) => `<button class="chip ${state.period === k ? 'on' : ''}" data-period="${k}">${l}</button>`).join('')}</div></div>`;
@@ -384,8 +382,6 @@
       return;
     }
 
-    const byStreak = [[2, 2, '2 матчі'], [3, 3, '3 матчі'], [4, 4, '4 матчі'], [5, 99, '5+ матчів']]
-      .map(([lo, hi, label]) => ({ label, list: all.filter(b => b.r.n >= lo && b.r.n <= hi) })).filter(x => x.list.length);
     const leagues = new Map();
     for (const b of all) { const k = leagueLabel(b.r.slug); if (!leagues.has(k)) leagues.set(k, []); leagues.get(k).push(b); }
 
@@ -401,38 +397,56 @@
     const currentN = new Map(d.current.map(c => [c.team.id, c.n]));
     const teamRows = [...byTeam.values()].filter(t => t.zero).sort((a, b) => b.zero - a.zero || (currentN.get(b.team.id) || 0) - (currentN.get(a.team.id) || 0));
 
+    // Окремий рахунок для кожної ставки: свій депозит 5000 грн, 50 грн на ставку.
+    const bankCard = (label, list) => {
+      const pr = list.reduce((s, b) => s + b.profit, 0);
+      const w = list.filter(b => b.s === 'win').length, v = list.filter(b => b.s === 'void').length, l = list.filter(b => b.s === 'loss').length;
+      return `
+        <section class="card bank">
+          <div class="bank-balance"><span>Рахунок ${label}</span><b class="${pr >= 0 ? 'ok' : 'bad'}">${money(BANK + pr)}</b><small>депозит ${money(BANK)} · ставка ${STAKE} грн</small></div>
+          <div class="kpis kpis2">
+            <div><b class="${pr >= 0 ? 'ok' : 'bad'}">${uah(pr)}</b><span>прибуток</span></div>
+            <div><b>${(pr / (list.length * STAKE) * 100).toFixed(1)}%</b><span>ROI<br>поставлено ${money(list.length * STAKE)}</span></div>
+            <div><b>${w} / ${l}</b><span>виграно / програно${v ? `<br>повернень ${v}` : ''}</span></div>
+          </div>
+          ${balanceChart(list)}
+        </section>`;
+    };
+    const it1 = all.filter(b => b.key === 'it1'), it15 = all.filter(b => b.key === 'it15');
+    const byStreakTable = list => [[2, 2, '2 матчі'], [3, 3, '3 матчі'], [4, 4, '4 матчі'], [5, 99, '5+ матчів']]
+      .map(([lo, hi, label]) => [label, list.filter(b => b.r.n >= lo && b.r.n <= hi)]).filter(x => x[1].length)
+      .map(([label, l]) => aggRow(label, l)).join('');
+
     $view.innerHTML = head + `
-      <section class="card bank">
-        <div class="bank-balance"><span>Баланс</span><b class="${profit >= 0 ? 'ok' : 'bad'}">${money(BANK + profit)}</b><small>стартовий банк ${money(BANK)} · 50 грн на кожну ставку</small></div>
-        <div class="kpis kpis2">
-          <div><b class="${profit >= 0 ? 'ok' : 'bad'}">${uah(profit)}</b><span>прибуток</span></div>
-          <div><b>${(profit / (all.length * STAKE) * 100).toFixed(1)}%</b><span>ROI<br>поставлено ${money(all.length * STAKE)}</span></div>
-          <div><b>${wins} / ${losses}</b><span>виграно / програно<br>рекомендацій ${recs.length}</span></div>
-        </div>
-        ${balanceChart(all)}
-        <p class="hint">На кожну рекомендацію — дві ставки по 50 грн: ІТБ 1 і ІТБ 1.5. Кф — справедливий за ймовірністю моделі; у букмекера він на 5–8% нижчий, тож реальний результат був би гіршим. Облік — з 20.10 20:30: лише нові рекомендації.</p>
-      </section>
+      ${bankCard('ІТБ 1', it1)}
+      ${bankCard('ІТБ 1.5', it15)}
+      <p class="hint pad">Два окремі рахунки: на кожну рекомендацію — 50 грн на ІТБ 1 з рахунку ІТБ 1 і 50 грн на ІТБ 1.5 з рахунку ІТБ 1.5. Кф — справедливий за ймовірністю моделі; у букмекера він на 5–8% нижчий, тож реальний результат був би гіршим. Облік — з 20.10 20:30: лише нові рекомендації. Рекомендацій зіграно: ${recs.length}.</p>
       <section class="card"><h3>За ставками</h3>
-        <table class="markets dr-agg">${aggHead('Ставка')}<tbody>${aggRow('ІТБ 1', all.filter(b => b.key === 'it1'))}${aggRow('ІТБ 1.5', all.filter(b => b.key === 'it15'))}${aggRow('Разом', all)}</tbody></table>
+        <table class="markets dr-agg">${aggHead('Ставка')}<tbody>${aggRow('ІТБ 1', it1)}${aggRow('ІТБ 1.5', it15)}</tbody></table>
         <p class="hint">В/П/Пр — виграно / повернення / програно. Команда забила хоча б один гол у ${pct(recs.filter(r => r.g > 0).length / recs.length)} матчів (${recs.filter(r => r.g > 0).length} з ${recs.length}).</p>
       </section>
-      <section class="card"><h3>За довжиною серії</h3>
-        <table class="markets dr-agg">${aggHead('Без голів')}<tbody>${byStreak.map(x => aggRow(x.label, x.list)).join('')}</tbody></table>
+      <section class="card"><h3>За довжиною серії · ІТБ 1</h3>
+        <table class="markets dr-agg">${aggHead('Без голів')}<tbody>${byStreakTable(it1)}</tbody></table>
       </section>
-      <section class="card"><h3>За турнірами</h3>
-        <table class="markets dr-agg">${aggHead('Турнір')}<tbody>${[...leagues].sort((a, b) => b[1].length - a[1].length).map(([k, list]) => aggRow(k, list)).join('')}</tbody></table>
+      <section class="card"><h3>За довжиною серії · ІТБ 1.5</h3>
+        <table class="markets dr-agg">${aggHead('Без голів')}<tbody>${byStreakTable(it15)}</tbody></table>
       </section>
+      ${[['ІТБ 1', 'it1'], ['ІТБ 1.5', 'it15']].map(([label, key]) => `<section class="card"><h3>За турнірами · ${label}</h3>
+        <table class="markets dr-agg">${aggHead('Турнір')}<tbody>${[...leagues].sort((a, b) => b[1].length - a[1].length).map(([k, list]) => aggRow(k, list.filter(b => b.key === key))).join('')}</tbody></table>
+      </section>`).join('')}
       <section class="card"><h3>Рекомендація = результат</h3>
         <table class="markets dr-res">
-          <thead><tr><th>Матч</th><th>Рахунок</th><th>ІТБ 1</th><th>ІТБ 1.5</th><th>Грн</th></tr></thead>
+          <thead><tr><th>Матч</th><th>Рахунок</th><th>ІТБ 1</th><th>ІТБ 1.5</th></tr></thead>
           <tbody>${recs.slice().reverse().map(r => {
-            const pl = profitOf(r.st1, r.it1.p) + profitOf(r.st15, r.it15.p);
+            const cell = (st, p) => {
+              const pl = profitOf(st, p);
+              return `<td class="${pl > 0 ? 'ok' : pl < 0 ? 'bad' : ''}">${ICON[st]} ${st === 'void' ? '0 грн' : uah(pl)}<small>${pct(p)} · кф ${(1 / p).toFixed(2)}</small></td>`;
+            };
             return `<tr>
               <td><b>${esc(r.team.short || r.team.name)}</b> ${r.side === 'home' ? 'vs' : '@'} ${esc(r.opp.short || r.opp.name)}<small>${dateOf(r.ev.ts)} · ${esc(leagueOf(r.slug).short)} · без голів ${r.n}</small></td>
               <td><b>${r.ev.home.score}:${r.ev.away.score}</b><small>забила ${r.g}</small></td>
-              <td>${ICON[r.st1]}<small>${pct(r.it1.p)}</small></td>
-              <td>${ICON[r.st15]}<small>${pct(r.it15.p)}</small></td>
-              <td class="${pl > 0 ? 'ok' : pl < 0 ? 'bad' : ''}">${uah(pl)}</td>
+              ${cell(r.st1, r.it1.p)}
+              ${cell(r.st15, r.it15.p)}
             </tr>`;
           }).join('')}</tbody>
         </table>
