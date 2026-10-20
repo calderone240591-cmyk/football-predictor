@@ -1381,6 +1381,7 @@
         <a href="#/info/markets">Словник ставок</a>
         <a href="#/info/how">Як працює аналіз</a>
         <a href="#/info/data">Дані</a>
+        <a href="drought/">Сухі серії →</a>
       </nav>
 
       <section class="card" id="t-terms">

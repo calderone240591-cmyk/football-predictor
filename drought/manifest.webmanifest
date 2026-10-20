@@ -1,0 +1,17 @@
+{
+  "name": "Сухі серії — команди без голів",
+  "short_name": "Сухі серії",
+  "description": "Команди, що не забивають 3 тури і більше: рекомендації на індивідуальний тотал і статистика",
+  "lang": "uk",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0e1311",
+  "theme_color": "#0e1311",
+  "icons": [
+    { "src": "../icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "../icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "../icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

@@ -1,0 +1,25 @@
+/* «Сухі серії» — доповнення до ../styles.css */
+.drec .m-meta { margin-bottom: 6px; }
+.dr-match { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; font-weight: 600; font-size: 15px; }
+.dr-match span:last-child { text-align: right; }
+.dr-match > b { font-variant-numeric: tabular-nums; font-size: 17px; }
+.dr-hl { color: var(--lo); }
+.dr-streak { margin: 8px 0 10px; font-size: 13px; color: var(--muted); }
+.dr-streak b { color: var(--text); }
+.dr-bets { display: grid; gap: 6px; }
+.dr-bet { display: grid; grid-template-columns: 1fr auto auto 18px; gap: 10px; align-items: center; padding: 9px 12px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.dr-bet > div { display: grid; min-width: 0; }
+.dr-bet span { font-weight: 700; font-size: 14px; }
+.dr-bet small { font-size: 11px; color: var(--muted); }
+.dr-bet b { font-size: 17px; }
+.dr-bet i { font-style: normal; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.dr-bet em { font-style: normal; text-align: center; }
+.dr-bet.st-win { background: color-mix(in srgb, var(--hi) 14%, transparent); }
+.dr-bet.st-loss { background: color-mix(in srgb, var(--lo) 12%, transparent); }
+.dr-table td, .dr-agg td, .dr-res td, .dr-fail td { vertical-align: top; }
+.dr-table td small, .dr-agg td small, .dr-res td small, .dr-fail td small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; font-weight: 400; }
+.dr-n { color: var(--lo); font-size: 16px; }
+.dr-res td:last-child, .dr-res th:last-child, .dr-agg td:last-child, .dr-agg th:last-child { text-align: right; white-space: nowrap; }
+.dr-list { margin-top: 10px; }
+.dr-list em { font-style: normal; font-size: 12px; color: var(--muted); }
+.pad { padding: 0 2px; }

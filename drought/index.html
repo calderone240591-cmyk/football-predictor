@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0e1311">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Сухі серії">
+  <meta name="description" content="Команди, що не забивають 3 тури і більше: рекомендації на індивідуальний тотал і статистика">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="../icons/icon-192.png">
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="drought.css">
+  <title>Сухі серії</title>
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="title">Рекомендації</h1>
+    <button id="refresh" class="icon-btn" aria-label="Оновити">
+      <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg>
+    </button>
+  </header>
+
+  <main id="view"></main>
+
+  <nav class="tabbar">
+    <a href="#/" data-tab="recs">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      <span>Рекомендації</span>
+    </a>
+    <a href="#/teams" data-tab="teams">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <span>Серії</span>
+    </a>
+    <a href="#/stats" data-tab="stats">
+      <svg viewBox="0 0 24 24"><path d="M4 19V10M10 19V5M16 19v-7M22 19H2"/></svg>
+      <span>Статистика</span>
+    </a>
+    <a href="../" data-tab="main">
+      <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>
+      <span>Прогнози</span>
+    </a>
+  </nav>
+
+  <script src="../js/config.js"></script>
+  <script src="../js/store.js"></script>
+  <script src="../js/api.js"></script>
+  <script src="../js/model.js"></script>
+  <script src="drought.js"></script>
+  <script>
+    if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+      // Спільний service worker сайту: оновлення приходять одразу, сторінка перезавантажується сама.
+      const hadController = !!navigator.serviceWorker.controller;
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (hadController && !reloaded) { reloaded = true; location.reload(); }
+      });
+      navigator.serviceWorker.register('../sw.js', { scope: '../' }).then(r => {
+        r.update();
+        setInterval(() => r.update().catch(() => {}), 5 * 60 * 1000);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) r.update().catch(() => {}); });
+      }).catch(() => {});
+    }
+  </script>
+</body>
+</html>
