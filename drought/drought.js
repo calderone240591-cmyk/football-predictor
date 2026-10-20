@@ -1,21 +1,57 @@
-// «Сухі серії»: команди, що не забивають у чемпіонаті 2 матчі поспіль і більше.
+// «Сухі серії»: команди, що не забивають 2 матчі поспіль і більше. Два режими:
+//   • «Чемпіонат» — серія лише за матчами чемпіонату, рекомендації на матчі чемпіонату;
+//   • «Усі турніри» — повна серія: чемпіонат, єврокубки, національні кубки, континентальні турніри
+//     (будь-який матч без гола подовжує серію), рекомендації на матч у будь-якому турнірі.
 //
-// Рекомендація — індивідуальний тотал такої команди в її наступному матчі:
+// Рекомендація — індивідуальний тотал такої команди в її наступному матчі (у будь-якому турнірі):
 //   • ІТБ 1 (азійський): 2+ голи — виграш, рівно 1 — повернення ставки, 0 — програш;
 //   • ІТБ 1.5: 2+ голи — виграш.
 // Ймовірність — з моделі основного додатка (рейтинги атаки й оборони з результатів сезону,
 // js/model.js) станом на день матчу, без коефіцієнтів букмекера: ESPN не зберігає їх після матчу.
-// Тому рекомендація і статистика рахуються однаково на будь-якому пристрої та й для минулих турів.
+// Тому рекомендація і статистика рахуються однаково на будь-якому пристрої.
 (() => {
-  const { api, model, LEAGUES, LEAGUE_BY_SLUG } = FP;
-  const DOMESTIC = LEAGUES.filter(l => !l.cup);   // лише чемпіонати: «тури» є тільки в лігах
+  const { api, model, LEAGUES } = FP;
   const MIN_STREAK = 2;
   const STAKE = 50;
   const BANK = 5000;
   // Облік із нуля: статистика й зіграні рекомендації — лише для матчів, що почались після запуску.
   const LAUNCH = Date.parse('2026-10-20T20:30:00+03:00') / 1000;
   const REFRESH = 5 * 60 * 1000;
+  const HORIZON = 10 * 86400;
   const VOID = /POSTPONED|CANCELED|ABANDONED/;
+
+  // Турніри: 25 чемпіонатів основного додатка + єврокубки з config.js + кубки й континентальні турніри.
+  // ID команд в ESPN спільні для всіх турнірів, тож матчі однієї команди з різних турнірів зводяться разом.
+  const CHAMPS = LEAGUES.filter(l => !l.cup);
+  const CUPS = [
+    ...LEAGUES.filter(l => l.cup),
+    ['uefa.super_cup', 'Суперкубок УЄФА', 'СК УЄФА', 'УЄФА'],
+    ['eng.fa', 'Кубок Англії', 'Кубок Англії', 'Англія'],
+    ['eng.league_cup', 'Кубок ліги', 'Кубок ліги', 'Англія'],
+    ['eng.charity', 'Суперкубок Англії', 'СК Англії', 'Англія'],
+    ['esp.copa_del_rey', 'Кубок Короля', 'Кубок Іспанії', 'Іспанія'],
+    ['esp.super_cup', 'Суперкубок Іспанії', 'СК Іспанії', 'Іспанія'],
+    ['ita.coppa_italia', 'Кубок Італії', 'Кубок Італії', 'Італія'],
+    ['ita.super_cup', 'Суперкубок Італії', 'СК Італії', 'Італія'],
+    ['ger.dfb_pokal', 'Кубок Німеччини', 'Кубок Німеччини', 'Німеччина'],
+    ['ger.super_cup', 'Суперкубок Німеччини', 'СК Німеччини', 'Німеччина'],
+    ['fra.coupe_de_france', 'Кубок Франції', 'Кубок Франції', 'Франція'],
+    ['fra.super_cup', 'Суперкубок Франції', 'СК Франції', 'Франція'],
+    ['ned.cup', 'Кубок Нідерландів', 'Кубок Нідерл.', 'Нідерланди'],
+    ['por.taca.portugal', 'Кубок Португалії', 'Кубок Порт.', 'Португалія'],
+    ['sco.tennents', 'Кубок Шотландії', 'Кубок Шотл.', 'Шотландія'],
+    ['sco.cis', 'Кубок ліги Шотландії', 'Кубок ліги Шотл.', 'Шотландія'],
+    ['bra.copa_do_brazil', 'Кубок Бразилії', 'Кубок Бразилії', 'Бразилія'],
+    ['arg.copa', 'Кубок Аргентини', 'Кубок Арг.', 'Аргентина'],
+    ['usa.open', 'Відкритий кубок США', 'Кубок США', 'США'],
+    ['conmebol.libertadores', 'Кубок Лібертадорес', 'Лібертадорес', 'КОНМЕБОЛ'],
+    ['conmebol.sudamericana', 'Південноамериканський кубок', 'Судамерикана', 'КОНМЕБОЛ'],
+    ['concacaf.champions', 'Кубок чемпіонів КОНКАКАФ', 'ЛЧ КОНКАКАФ', 'КОНКАКАФ'],
+    ['concacaf.leagues.cup', 'Кубок ліг', 'Кубок ліг', 'КОНКАКАФ'],
+    ['afc.champions', 'Ліга чемпіонів АФК', 'ЛЧ АФК', 'АФК'],
+  ].map(c => (Array.isArray(c) ? { slug: c[0], name: c[1], short: c[2], country: c[3], logo: null, cup: true } : c));
+  const COMPS = [...CHAMPS, ...CUPS];
+  const COMP = new Map(COMPS.map(c => [c.slug, c]));
 
   const $view = document.getElementById('view');
   const $title = document.getElementById('title');
@@ -38,7 +74,7 @@
   const dayStart = ts => { const d = new Date(ts * 1000); d.setHours(0, 0, 0, 0); return d.getTime() / 1000; };
   const uah = v => `${v >= 0 ? '+' : '−'}${Math.abs(Math.round(v)).toLocaleString('uk-UA')} грн`;
   const money = v => `${Math.round(v).toLocaleString('uk-UA')} грн`;
-  const leagueOf = slug => LEAGUE_BY_SLUG.get(slug);
+  const leagueOf = slug => COMP.get(slug);
   const leagueLabel = slug => { const l = leagueOf(slug); return l ? `${l.country} · ${l.name}` : ''; };
   const plural = (n, one, few, many) => {
     const m10 = n % 10, m100 = n % 100;
@@ -60,18 +96,32 @@
   const settle = (key, g) => (g == null ? 'pending' : g >= 2 ? 'win' : key === 'it1' && g === 1 ? 'void' : 'loss');
   const profitOf = (s, p) => (s === 'win' ? (1 / p - 1) * STAKE : s === 'loss' ? -STAKE : 0);
 
-  async function analyzeLeague(l) {
-    const league = leagueOf(l.slug);
-    const s = await api.season(l.slug, false, true);
-    const results = [...s.previous, ...s.events].filter(model.isResult).sort((a, b) => a.ts - b.ts);
+  // Моделі «станом на початок дня t» (лише результати до цього дня). Для минулих днів вони вже
+  // не змінюються, тож зберігаються між оновленнями; поточний день перераховується щоразу.
+  const modelCache = new Map();
+  const masked = (events, t) => events.map(e => (e.ts < t || !model.isResult(e) ? e : { ...e, state: 'pre', completed: false }));
+
+  function analyze(seasons, mode) {
+    const now = Date.now() / 1000;
+    const today = dayStart(now);
+
+    // Усі матчі кожної команди з усіх турнірів (і кінець минулого сезону чемпіонату) — для серій.
+    const seen = new Set();
     const games = new Map();   // id команди → [{ ts, g }] у хронологічному порядку
-    for (const e of results) {
-      for (const [id, g] of [[e.home.id, e.home.score], [e.away.id, e.away.score]]) {
-        if (!games.has(id)) games.set(id, []);
-        games.get(id).push({ ts: e.ts, g });
+    const all = [];
+    for (const s of seasons.filter(x => mode === 'all' || !x.comp.cup)) {
+      for (const [list, current] of [[s.previous, false], [s.events, true]]) for (const e of list) {
+        if (seen.has(e.id)) continue;
+        seen.add(e.id);
+        if (current) all.push({ slug: s.comp.slug, ev: e });
+        if (!model.isResult(e)) continue;
+        for (const [id, g] of [[e.home.id, e.home.score], [e.away.id, e.away.score]]) {
+          if (!games.has(id)) games.set(id, []);
+          games.get(id).push({ ts: e.ts, g });
+        }
       }
     }
-    // Скільки матчів поспіль команда не забивала перед моментом ts.
+    for (const list of games.values()) list.sort((a, b) => a.ts - b.ts);
     const streak = (id, ts) => {
       const list = games.get(id) || [];
       let i = list.length - 1;
@@ -80,53 +130,78 @@
       while (i >= 0 && list[i].g === 0) { n++; i--; }
       return { n, lastGoal: i >= 0 ? list[i].ts : null };
     };
-    // Модель станом на початок дня: лише результати, відомі до цього дня.
-    const models = new Map();
-    const modelAt = t => {
-      if (models.has(t)) return models.get(t);
+
+    // Рекомендуємо лише командам наших 25 чемпіонатів: про інших (нижчі ліги в кубках, клуби з
+    // чемпіонатів поза списком) у даних не всі матчі, і серія була б неточною.
+    const bySlug = new Map(seasons.map(s => [s.comp.slug, s]));
+    const homeLeague = new Map();
+    for (const c of CHAMPS) for (const e of (bySlug.get(c.slug) || { events: [] }).events) { homeLeague.set(e.home.id, c.slug); homeLeague.set(e.away.id, c.slug); }
+
+    const leagueModelAt = (slug, t) => {
+      const k = `${slug}:${t}`;
+      if (modelCache.has(k)) return modelCache.get(k);
+      const s = bySlug.get(slug);
       let m = null;
       try {
-        const evs = s.events.map(e => (e.ts < t || !model.isResult(e) ? e : { ...e, state: 'pre', completed: false }));
-        const prev = s.previous.filter(e => e.ts < t);
-        if (evs.some(model.isResult) || prev.length) m = model.build(league, evs, null, prev, t);
+        const evs = masked(s.events, t), prev = s.previous.filter(e => e.ts < t);
+        if (evs.some(model.isResult) || prev.length) m = model.build(COMP.get(slug), evs, null, prev, t);
       } catch {}
-      models.set(t, m);
+      modelCache.set(k, m);
+      return m;
+    };
+    // Для кубків — рейтинги команд у їхніх чемпіонатах з поправкою на силу чемпіонату (як у js/app.js).
+    const cupModelAt = (slug, t) => {
+      const k = `${slug}:${t}`;
+      if (modelCache.has(k)) return modelCache.get(k);
+      const domestic = new Map();
+      for (const c of CHAMPS) {
+        if (!bySlug.has(c.slug)) continue;
+        const m = leagueModelAt(c.slug, t);
+        if (m) for (const tm of m.teams.values()) domestic.set(tm.id, { att: tm.att, def: tm.def, q: c.q, slug: c.slug });
+      }
+      let m = null;
+      try { m = model.build(COMP.get(slug), masked(bySlug.get(slug).events, t), domestic, null, t); } catch {}
+      modelCache.set(k, m);
       return m;
     };
 
-    const today = dayStart(Date.now() / 1000);
     const recs = [];
-    for (const ev of s.events) {
+    for (const { slug, ev } of all) {
       if (VOID.test(ev.status)) continue;
+      // Лише те, що потрібно: зіграні після запуску (статистика) і найближчі 10 днів (рекомендації).
+      if (ev.ts < LAUNCH || ev.ts > now + HORIZON) continue;
       for (const side of ['home', 'away']) {
         const team = ev[side];
+        if (!homeLeague.has(team.id)) continue;
         const st = streak(team.id, ev.ts);
         if (st.n < MIN_STREAK) continue;
-        const m = modelAt(Math.min(dayStart(ev.ts), today));
+        const t = Math.min(dayStart(ev.ts), today);
+        const m = COMP.get(slug).cup ? cupModelAt(slug, t) : leagueModelAt(slug, t);
         const pred = m && model.predict(m, { ...ev, odds: null }, null);
         if (!pred) continue;
         const b = bets(side === 'home' ? pred.lh : pred.la);
         const done = model.isResult(ev);
         const g = done ? team.score : null;
         recs.push({
-          id: `${ev.id}:${side}`, slug: l.slug, ev, side, team, opp: ev[side === 'home' ? 'away' : 'home'],
+          id: `${ev.id}:${side}`, slug, ev, side, team, opp: ev[side === 'home' ? 'away' : 'home'],
           n: st.n, lastGoal: st.lastGoal, ...b, g, done,
           st1: settle('it1', g), st15: settle('it15', g),
         });
       }
     }
 
-    const now = Date.now() / 1000;
+    // Поточні серії команд наших чемпіонатів і їхній наступний матч у будь-якому турнірі.
     const teams = new Map();
-    for (const e of s.events) { teams.set(e.home.id, e.home); teams.set(e.away.id, e.away); }
+    for (const { ev } of all) for (const t of [ev.home, ev.away]) if (homeLeague.has(t.id)) teams.set(t.id, t);
+    const upcomingAll = all.filter(x => !model.isResult(x.ev) && !VOID.test(x.ev.status) && x.ev.ts > now - 3 * 3600).sort((a, b) => a.ev.ts - b.ev.ts);
     const current = [];
     for (const [id, team] of teams) {
       const st = streak(id, Infinity);
       if (st.n < MIN_STREAK) continue;
-      const next = s.events.find(e => (e.home.id === id || e.away.id === id) && !model.isResult(e) && !VOID.test(e.status) && e.ts > now - 3 * 3600);
-      current.push({ slug: l.slug, team, n: st.n, lastGoal: st.lastGoal, next });
+      const nx = upcomingAll.find(x => x.ev.home.id === id || x.ev.away.id === id);
+      current.push({ slug: homeLeague.get(id), team, n: st.n, lastGoal: st.lastGoal, next: nx && nx.ev, nextSlug: nx && nx.slug });
     }
-    return { recs, current, events: s.events };
+    return { mode, recs, current, events: all };
   }
 
   function load(force) {
@@ -135,18 +210,18 @@
     let done = 0;
     state.loading = (async () => {
       await FP.store.ready;
-      const out = { recs: [], current: [], events: [], errors: 0 };
-      await api.pool(DOMESTIC, 4, async l => {
-        try {
-          const r = await analyzeLeague(l);
-          out.recs.push(...r.recs);
-          out.current.push(...r.current);
-          out.events.push(...r.events.map(ev => ({ slug: l.slug, ev })));
-        } catch { out.errors++; }
+      let errors = 0;
+      const seasons = (await api.pool(COMPS, 4, async c => {
+        let s = null;
+        try { s = { comp: c, ...(await api.season(c.slug, false, !c.cup)) }; } catch { if (!c.cup) errors++; }
         done++;
         const $p = document.getElementById('progress');
-        if ($p) $p.textContent = `Аналіз чемпіонатів: ${done} з ${DOMESTIC.length}…`;
-      });
+        if ($p) $p.textContent = `Завантаження турнірів: ${done} з ${COMPS.length}…`;
+        return s;
+      })).filter(Boolean);
+      const today = dayStart(Date.now() / 1000);
+      for (const k of [...modelCache.keys()]) if (k.endsWith(`:${today}`)) modelCache.delete(k);
+      const out = { league: { ...analyze(seasons, 'league'), errors }, all: { ...analyze(seasons, 'all'), errors } };
       state.data = out;
       state.loadedAt = Date.now();
       return out;
@@ -160,14 +235,14 @@
     document.querySelectorAll('.tabbar a').forEach(a => a.classList.toggle('on', a.dataset.tab === tab));
   }
 
-  async function withData(title, tab, render) {
+  async function withData(title, tab, render, mode = 'league') {
     const rid = ++renderId;
     setHeader(title, tab);
-    if (!state.data) $view.innerHTML = '<div class="loading" id="progress">Аналіз чемпіонатів…</div>';
-    else render(state.data);
+    if (!state.data) $view.innerHTML = '<div class="loading" id="progress">Завантаження турнірів…</div>';
+    else render(state.data[mode]);
     const d = await load(false);
     if (rid !== renderId) return;
-    render(d);
+    render(d[mode]);
   }
 
   const leagueChip = slug => {
@@ -204,7 +279,6 @@
       </section>`;
   }
 
-  const HORIZON = 10 * 86400;
   // Найближчий матч кожної «сухої» команди: після нього серія або перерветься, або подовжиться.
   function upcomingRecs(d) {
     const now = Date.now() / 1000;
@@ -233,11 +307,11 @@
       return o <= 2 ? dayLabel(o) : `${WD[new Date(ts * 1000).getDay()]}, ${dateOf(ts)}`;
     };
     $view.innerHTML = `
-      <p class="summary">Проаналізовано ${matches(analyzed)} у ${DOMESTIC.length} чемпіонатах на 10 днів · рекомендацій: <b>${upcoming.length}</b>${d.errors ? ` · не завантажено ліг: ${d.errors}` : ''}</p>
+      <p class="summary">Проаналізовано ${matches(analyzed)} у ${d.mode === 'all' ? `${COMPS.length} турнірах` : `${CHAMPS.length} чемпіонатах`} на 10 днів · рекомендацій: <b>${upcoming.length}</b>${d.errors ? ` · не завантажено ліг: ${d.errors}` : ''}</p>
       ${upcoming.length ? [...byDay].map(([, list]) => `<h2 class="section-title">${esc(dayTitle(list[0].ev.ts))}</h2>${list.map(recCard).join('')}`).join('')
         : `<div class="empty">Найближчими днями немає матчів команд, що не забивають ${MIN_STREAK} тури і більше.</div>`}
       ${recent.length ? `<h2 class="section-title">Зіграні за 3 дні</h2>${recent.map(recCard).join('')}` : ''}
-      <p class="hint pad">Рекомендація — лише для команди, яка не забивала в чемпіонаті ${MIN_STREAK} матчі поспіль і більше. Ставки — на її індивідуальний тотал: ІТБ 1 (2+ голи — виграш, рівно 1 — повернення) та ІТБ 1.5 (2+ голи). Ймовірність — з моделі за результатами сезону; кф — справедливий (1 ÷ ймовірність), у букмекера на 5–8% нижчий.</p>`;
+      <p class="hint pad">Рекомендація — лише для команди, яка не забивала ${d.mode === 'all' ? 'в усіх турнірах разом' : 'в чемпіонаті'} ${MIN_STREAK} матчі поспіль і більше. Ставки — на її індивідуальний тотал: ІТБ 1 (2+ голи — виграш, рівно 1 — повернення) та ІТБ 1.5 (2+ голи). Ймовірність — з моделі за результатами сезону; кф — справедливий (1 ÷ ймовірність), у букмекера на 5–8% нижчий.</p>`;
   }
 
   // ---------- Серії ----------
@@ -253,10 +327,10 @@
           return `<tr>
             <td><b>${esc(r.team.name)}</b><small>${esc(leagueLabel(r.slug))}</small></td>
             <td><b class="dr-n">${r.n}</b><small>${r.lastGoal ? `гол ${dateOf(r.lastGoal)}` : 'без голів'}</small></td>
-            <td>${nx ? `${esc(nx.home.id === r.team.id ? 'vs' : '@')} ${esc(opp.short || opp.name)}<small>${dateOf(nx.ts)} ${timeOf(nx.ts)}</small>` : '<small>немає в розкладі</small>'}</td>
+            <td>${nx ? `${esc(nx.home.id === r.team.id ? 'vs' : '@')} ${esc(opp.short || opp.name)}<small>${dateOf(nx.ts)} ${timeOf(nx.ts)}${r.nextSlug && r.nextSlug !== r.slug ? ` · ${esc(leagueOf(r.nextSlug).short)}` : ''}</small>` : '<small>немає в розкладі</small>'}</td>
           </tr>`;
         }).join('')}</tbody></table></section>` : `<div class="empty">Зараз немає команд із серією без голів від ${MIN_STREAK} матчів.</div>`}
-      <p class="hint pad">«vs» — удома, «@» — у гостях. Серія рахується за матчами чемпіонату (з урахуванням кінця минулого сезону).</p>`;
+      <p class="hint pad">«vs» — удома, «@» — у гостях. ${d.mode === 'all' ? 'Повна серія — за всіма матчами команди: чемпіонат, єврокубки, національні й континентальні кубки.' : 'Серія рахується лише за матчами чемпіонату (з урахуванням кінця минулого сезону).'}</p>`;
   }
 
   // ---------- Статистика ----------
@@ -345,8 +419,8 @@
       <section class="card"><h3>За довжиною серії</h3>
         <table class="markets dr-agg">${aggHead('Без голів')}<tbody>${byStreak.map(x => aggRow(x.label, x.list)).join('')}</tbody></table>
       </section>
-      <section class="card"><h3>За чемпіонатами</h3>
-        <table class="markets dr-agg">${aggHead('Чемпіонат')}<tbody>${[...leagues].sort((a, b) => b[1].length - a[1].length).map(([k, list]) => aggRow(k, list)).join('')}</tbody></table>
+      <section class="card"><h3>За турнірами</h3>
+        <table class="markets dr-agg">${aggHead('Турнір')}<tbody>${[...leagues].sort((a, b) => b[1].length - a[1].length).map(([k, list]) => aggRow(k, list)).join('')}</tbody></table>
       </section>
       <section class="card"><h3>Рекомендація = результат</h3>
         <table class="markets dr-res">
@@ -381,18 +455,31 @@
   }
 
   // ---------- навігація ----------
+  // Вкладка «Усі турніри»: ті самі розділи, але серія — за всіма матчами команди.
+  const ALL_VIEWS = [['recs', 'Рекомендації', renderRecs], ['teams', 'Серії', renderTeams], ['stats', 'Статистика', renderStats]];
+  state.allView = 'recs';
+  function renderAll(d) {
+    const [, , render] = ALL_VIEWS.find(v => v[0] === state.allView);
+    render(d);
+    $view.insertAdjacentHTML('afterbegin', `
+      <div class="controls"><div class="segmented">${ALL_VIEWS.map(([k, l]) => `<button class="${state.allView === k ? 'on' : ''}" data-allview="${k}">${l}</button>`).join('')}</div></div>
+      <p class="summary dr-mode">Повна серія: чемпіонат + єврокубки + кубки — будь-який матч без гола подовжує серію.</p>`);
+  }
+
   function route(keepScroll) {
     const h = location.hash.slice(1) || '/';
     if (keepScroll !== true) window.scrollTo(0, 0);
     if (h.startsWith('/teams')) return withData('Серії без голів', 'teams', renderTeams);
     if (h.startsWith('/stats')) return withData('Статистика', 'stats', renderStats);
+    if (h.startsWith('/all')) return withData('Усі турніри', 'all', renderAll, 'all');
     return withData('Рекомендації', 'recs', renderRecs);
   }
 
   $view.addEventListener('click', e => {
     const b = e.target.closest('button');
     if (!b || !state.data) return;
-    if (b.dataset.period) { state.period = b.dataset.period; renderStats(state.data); }
+    if (b.dataset.period) { state.period = b.dataset.period; route(true); }
+    else if (b.dataset.allview) { state.allView = b.dataset.allview; route(true); }
   });
   document.getElementById('refresh').addEventListener('click', async () => {
     $title.textContent = 'Оновлення…';
