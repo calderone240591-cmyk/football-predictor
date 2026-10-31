@@ -44,6 +44,9 @@
 .mg-inputs input { width: 120px; }
 .dr-ladder { margin-top: 12px; }
 .dr-ladder td:not(:first-child), .dr-ladder th:not(:first-child) { text-align: right; }
+.dr-ladder tr.over td { background: color-mix(in srgb, var(--lo) 9%, transparent); }
+.dr-ladder tr.over td:nth-child(3) { color: var(--lo); }
+.mg-inputs input { width: 100px; }
 .dr-sub { margin-top: 18px; }
 .mg-chain { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
 .mg-chain h4 { margin: 0 0 4px; font-size: 13px; color: var(--muted); }
@@ -54,7 +57,7 @@
 .mg-sched td:nth-child(n+3), .mg-sched th:nth-child(n+3) { text-align: right; }
 .mg-sched .live { color: var(--lo); }
 .mg-sched.dr-agg tr.mg-day td { text-align: left; padding-top: 12px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
-.mg-sched td.mg-skip { color: var(--muted); }
+.mg-sched td.mg-bust, .mg-sched td.mg-bust small { color: var(--lo); }
 .mg-now { margin: 4px 0 8px; font-size: 13px; }
 .card .notice.error { margin-bottom: 12px; font-size: 13px; }
 .dr-dist td:not(:first-child), .dr-dist th:not(:first-child) { text-align: center; }
