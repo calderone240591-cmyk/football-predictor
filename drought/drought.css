@@ -38,4 +38,23 @@
 .dr-strip i.loss { background: var(--lo); color: var(--accent-ink); }
 .dr-tipline { min-height: 16px; margin: 8px 0 4px; font-size: 12px; color: var(--muted); }
 .dr-dist { margin-top: 6px; }
+/* Мартингейл */
+.mg-inputs { display: flex; flex-wrap: wrap; gap: 10px 16px; }
+.mg-inputs label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.mg-inputs input { width: 120px; }
+.dr-ladder { margin-top: 12px; }
+.dr-ladder td:not(:first-child), .dr-ladder th:not(:first-child) { text-align: right; }
+.dr-sub { margin-top: 18px; }
+.mg-chain { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+.mg-chain h4 { margin: 0 0 4px; font-size: 13px; color: var(--muted); }
+.mg-chain.main h4 { color: var(--accent); }
+.mg-sched { table-layout: fixed; width: 100%; }
+.mg-sched th:nth-child(1) { width: 22%; } .mg-sched th:nth-child(2) { width: 34%; }
+.mg-sched.dr-agg td, .mg-sched.dr-agg th { white-space: normal; overflow-wrap: anywhere; }
+.mg-sched td:nth-child(n+3), .mg-sched th:nth-child(n+3) { text-align: right; }
+.mg-sched .live { color: var(--lo); }
+.mg-sched.dr-agg tr.mg-day td { text-align: left; padding-top: 12px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.mg-sched td.mg-skip { color: var(--muted); }
+.mg-now { margin: 4px 0 8px; font-size: 13px; }
+.card .notice.error { margin-bottom: 12px; font-size: 13px; }
 .dr-dist td:not(:first-child), .dr-dist th:not(:first-child) { text-align: center; }
