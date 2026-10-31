@@ -261,13 +261,16 @@
       </div>`;
   }
 
-  function recCard(r) {
+  // sp — особлива рекомендація: ['ІТБ 1', 'ІТБ 1.5'] — для яких ставок матч іде після 3 програшів поспіль.
+  function recCard(r, sp) {
     const ev = r.ev;
     const started = ev.state !== 'pre';
     const status = model.isResult(ev) ? 'Завершено' : ev.state === 'in' ? `LIVE ${esc(ev.clock || '')}` : timeOf(ev.ts);
     const name = t => `<span class="${t.id === r.team.id ? 'dr-hl' : ''}">${esc(t.name)}</span>`;
+    const special = Array.isArray(sp) && sp.length ? sp : null;
     return `
-      <section class="card drec">
+      <section class="card drec ${special ? 'special' : ''}">
+        ${special ? `<div class="dr-special">★ Особлива рекомендація: ${special.join(' і ')} — після ${SPECIAL_RUN} програшів поспіль</div>` : ''}
         <div class="m-meta"><span class="${ev.state === 'in' ? 'live' : ''}">${status}</span>${leagueChip(r.slug)}</div>
         <div class="dr-match">${name(ev.home)} <b>${started ? `${ev.home.score ?? 0} : ${ev.away.score ?? 0}` : '—'}</b> ${name(ev.away)}</div>
         <div class="dr-streak"><b>${esc(r.team.name)}</b> не забиває <b>${matches(r.n)}</b> поспіль${r.lastGoal ? ` · останній гол ${dateOf(r.lastGoal)}` : ''}</div>
@@ -277,6 +280,33 @@
         </div>
         <p class="hint">Очікувані голи команди: <b>${r.lambda.toFixed(2)}</b> · заб'є хоча б один: ${pct(r.scoreP)}</p>
       </section>`;
+  }
+
+  // ---------- Особливі рекомендації ----------
+  // Матч, що йде після 3 програшів ставки поспіль. Серія — по всіх зіграних рекомендаціях у порядку часу,
+  // як «Серії поспіль» у статистиці; для ІТБ 1 повернення (рівно 1 гол) програшем не рахується і серію
+  // не перериває. Окремо для ІТБ 1 і ІТБ 1.5.
+  const SPECIAL_RUN = 3;
+  const SPECIAL_BETS = [['it1', 'st1', 'ІТБ 1'], ['it15', 'st15', 'ІТБ 1.5']];
+  function specialInfo(d) {
+    const done = d.recs.filter(r => r.done && r.ev.ts >= LAUNCH).sort((a, b) => a.ev.ts - b.ev.ts);
+    const past = new Map();   // id зіграної рекомендації → ставки, для яких вона була особливою
+    const info = {};
+    for (const [key, stKey, label] of SPECIAL_BETS) {
+      let run = 0, from = null, wins = 0, n = 0;
+      for (const r of done) {
+        const s = r[stKey];
+        if (s === 'void') continue;
+        if (run >= SPECIAL_RUN) {
+          n++; if (s === 'win') wins++;
+          if (!past.has(r.id)) past.set(r.id, []);
+          past.get(r.id).push(label);
+        }
+        if (s === 'loss') { if (!run) from = r.ev.ts; run++; } else run = 0;
+      }
+      info[key] = { label, run, from, wins, n, on: run >= SPECIAL_RUN };
+    }
+    return { info, past };
   }
 
   // Найближчий матч кожної «сухої» команди: після нього серія або перерветься, або подовжиться.
@@ -306,11 +336,29 @@
       const o = Math.round((dayStart(ts) - dayStart(now)) / 86400);
       return o <= 2 ? dayLabel(o) : `${WD[new Date(ts * 1000).getDay()]}, ${dateOf(ts)}`;
     };
+    // Особлива рекомендація — найближчий матч (або кілька з тим самим часом початку) після 3 програшів поспіль.
+    const { info, past } = specialInfo(d);
+    const special = new Map(past);
+    const first = upcoming.length ? upcoming[0].ev.ts : null;
+    for (const r of upcoming) {
+      if (r.ev.ts !== first) continue;
+      const keys = SPECIAL_BETS.filter(([key]) => info[key].on).map(([, , label]) => label);
+      if (keys.length) special.set(r.id, keys);
+    }
+    const nextSpecial = upcoming.filter(r => special.has(r.id));
+    const line = x => `<div class="dr-sp-row ${x.on ? 'on' : ''}"><b>${x.label}</b>
+      <span>${x.on ? `★ ${x.run} ${plural(x.run, 'програш', 'програші', 'програшів')} поспіль з ${dateOf(x.from)} — наступний матч особливий` : `зараз програшів поспіль: ${x.run} з ${SPECIAL_RUN}`}</span>
+      <small>${x.n ? `раніше після ${SPECIAL_RUN}+ програшів ставка вигравала ${x.wins} з ${x.n} (${pct(x.wins / x.n)})` : `після ${SPECIAL_RUN}+ програшів ще не ставили`}</small></div>`;
     $view.innerHTML = `
       <p class="summary">Проаналізовано ${matches(analyzed)} у ${d.mode === 'all' ? `${COMPS.length} турнірах` : `${CHAMPS.length} чемпіонатах`} на 10 днів · рекомендацій: <b>${upcoming.length}</b>${d.errors ? ` · не завантажено ліг: ${d.errors}` : ''}</p>
-      ${upcoming.length ? [...byDay].map(([, list]) => `<h2 class="section-title">${esc(dayTitle(list[0].ev.ts))}</h2>${list.map(recCard).join('')}`).join('')
+      <section class="card dr-sp ${nextSpecial.length ? 'on' : ''}"><h3>Особливі рекомендації</h3>
+        ${line(info.it1)}${line(info.it15)}
+        ${nextSpecial.length ? `<p class="dr-sp-next">★ ${nextSpecial.map(r => `<b>${esc(r.team.name)}</b> ${r.side === 'home' ? 'vs' : '@'} ${esc(r.opp.name)} · ${dateOf(r.ev.ts)} ${timeOf(r.ev.ts)} — ${special.get(r.id).join(' і ')}`).join('<br>')}</p>` : ''}
+        <p class="hint">Особлива — рекомендація на матч, що йде після ${SPECIAL_RUN} програшів ставки поспіль (по всіх рекомендаціях за часом; для ІТБ 1 повернення не рахується програшем). Позначена ★ у списку.</p>
+      </section>
+      ${upcoming.length ? [...byDay].map(([, list]) => `<h2 class="section-title">${esc(dayTitle(list[0].ev.ts))}</h2>${list.map(r => recCard(r, special.get(r.id))).join('')}`).join('')
         : `<div class="empty">Найближчими днями немає матчів команд, що не забивають ${MIN_STREAK} тури і більше.</div>`}
-      ${recent.length ? `<h2 class="section-title">Зіграні за 3 дні</h2>${recent.map(recCard).join('')}` : ''}
+      ${recent.length ? `<h2 class="section-title">Зіграні за 3 дні</h2>${recent.map(r => recCard(r, special.get(r.id))).join('')}` : ''}
       <p class="hint pad">Рекомендація — лише для команди, яка не забивала ${d.mode === 'all' ? 'в усіх турнірах разом' : 'в чемпіонаті'} ${MIN_STREAK} матчі поспіль і більше. Ставки — на її індивідуальний тотал: ІТБ 1 (2+ голи — виграш, рівно 1 — повернення) та ІТБ 1.5 (2+ голи). Ймовірність — з моделі за результатами сезону; кф — справедливий (1 ÷ ймовірність), у букмекера на 5–8% нижчий.</p>`;
   }
 
