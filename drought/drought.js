@@ -453,27 +453,40 @@
   }
 
   // ---------- Мартингейл ----------
-  // Перша ставка — 25 грн. Після програшу ставка росте так, щоб виграш відіграв усе програне в серії
-  // і дав той самий чистий виграш, що й перша ставка: ставка = (програно + 25 × (кф − 1)) ÷ (кф − 1).
-  // Після виграшу — знову перша ставка (прибуток виводиться, робочий депозит той самий).
+  // Депозит 2000 грн, перша ставка 5 грн, після кожного програшу ставка ×3 (5 → 15 → 45 → 135 → 405 → 1215),
+  // після виграшу серія закінчена — знову перша ставка (прибуток виводиться, робочий депозит той самий).
   // Кф — справедливий з моделі мінус 7% (так приблизно дає букмекер); у драбині — медіанний кф ставки.
-  // Ставки йдуть по одній: наступна — лише після закінчення попереднього матчу (≈ 2 год від початку).
+  //
+  // Серія ведеться наживо: стартує з найближчого матчу (можна вказати, на якому кроці вона зараз і скільки
+  // в ній уже програно), далі кожен зіграний матч ланцюжка сам переводить її на наступний крок або,
+  // після виграшу, починає нову. Ставки йдуть по одній: наступний матч — після кінця попереднього (≈ 2 год).
   const MG_MARGIN = 0.93;
-  const MG_GAP = 2 * 3600;
-  const MG_DEFAULT = { bank: 500, stake: 25, steps: 10 };
-  const mgLoad = () => { try { return { ...MG_DEFAULT, ...JSON.parse(localStorage.getItem('dr_mg') || '{}') }; } catch { return { ...MG_DEFAULT }; } };
+  // Матч триває ≈ 1 год 55 хв від початку (з перервою й компенсованим часом); наступний матч ланцюжка —
+  // не раніше ніж через 2 год 15 хв, щоб після результату лишалось ≥ 20 хв поставити.
+  const MG_END = 115 * 60;
+  const MG_GAP = 135 * 60;
+  const MG_VARIANTS = 5;
+  const MG_DEFAULT = { bank: 2000, stake: 5, mult: 3, steps: 6 };   // steps — найбільше матчів у серії
+  function mgLoad() {
+    let s = {};
+    try { s = JSON.parse(localStorage.getItem('dr_mg2') || '{}'); } catch {}
+    return { ...MG_DEFAULT, ...s };
+  }
+  const mgSave = () => { try { localStorage.setItem('dr_mg2', JSON.stringify(state.mg)); } catch {} };
   state.mg = mgLoad();
+  const M = () => state.mg;
 
-  const mgStake = (lost, T, k) => Math.ceil((lost + T) / (k - 1) - 1e-9);
+  // Сума ставки на поточному кроці серії cur = { lost, step }.
+  const mgAmount = cur => Math.round(state.mg.stake * Math.pow(state.mg.mult, cur.step));
 
   // Драбина при кф k: ставка кроку, усього поставлено в серії, чистий виграш, якщо цей крок зіграє.
-  function mgLadder(T, k, n) {
-    let lost = 0;
+  function mgLadder(k, n) {
+    const cur = { lost: 0, step: 0 };
     const out = [];
     for (let i = 0; i < n; i++) {
-      const s = mgStake(lost, T, k);
-      out.push({ s, total: lost + s, net: s * (k - 1) - lost });
-      lost += s;
+      const s = mgAmount(cur);
+      out.push({ s, total: cur.lost + s, net: s * (k - 1) - cur.lost });
+      cur.lost += s; cur.step++;
     }
     return out;
   }
@@ -490,97 +503,46 @@
     return hit;
   }
 
-  // Наступна ставка серії cur = { lost, step, T }. Серія завжди починається з першої ставки (25 грн);
-  // її ціль T = перша ставка × (кф − 1) — виграш на будь-якому кроці дає стільки ж. Якщо на ставку вже
-  // не вистачає депозиту — серію програно (втрачено все поставлене в ній), нова — з першої ставки.
-  function mgNext(cur, stake, k, bank) {
-    const start = () => { cur.lost = 0; cur.step = 0; cur.T = stake * (k - 1); };
-    if (!cur.step) start();
-    let s = mgStake(cur.lost, cur.T, k), bust = false;
-    if (cur.lost + s > bank) { bust = true; start(); s = stake; }
+  // Наступна ставка серії cur = { lost, step }. Серія — не більше steps матчів: якщо вони всі програні або
+  // на наступну ставку не вистачає депозиту — серію програно, нова починається з першої ставки.
+  function mgNext(cur) {
+    const { stake, bank, steps } = state.mg;
+    const start = () => { cur.lost = 0; cur.step = 0; };
+    let s = mgAmount(cur), bust = false;
+    if (cur.step >= steps || cur.lost + s > bank) { bust = true; start(); s = stake; }
     return { s, bust };
   }
 
-  // Прогін плану по зіграних рекомендаціях, по одній ставці за раз (як ланцюжок 1 у розкладі).
-  function mgSimulate(bets, stake, bank) {
-    const cur = { lost: 0, step: 0, T: 0 };
-    let profit = 0, busyUntil = 0;
-    const res = { placed: 0, cycles: 0, busts: 0, maxStep: 0, overlap: 0, maxStake: 0, pts: [0], log: [] };
-    for (const b of bets) {
-      if (b.r.ev.ts < busyUntil) { res.overlap++; continue; }
-      busyUntil = b.r.ev.ts + MG_GAP;
-      const k = b.odds * MG_MARGIN;
-      const lostBefore = cur.lost;
-      const { s, bust } = mgNext(cur, stake, k, bank);
-      if (bust) { profit -= lostBefore; res.busts++; }
-      res.placed++;
-      res.maxStake = Math.max(res.maxStake, s);
-      let note = bust ? `депозиту не вистачило: −${lostBefore} грн, знову з першої ставки · ` : '';
-      if (b.s === 'void') note += 'повернення — крок той самий';
-      else if (b.s === 'win') {
-        const pr = s * (k - 1) - cur.lost;
-        profit += pr; res.cycles++;
-        note += `виграш на кроці ${cur.step + 1}: +${Math.round(pr)} грн`;
-        cur.lost = 0; cur.step = 0;
-      } else {
-        cur.lost += s; cur.step++;
-        res.maxStep = Math.max(res.maxStep, cur.step);
-        note += `програш ${cur.step} поспіль`;
-      }
-      res.pts.push(profit - cur.lost);
-      res.log.push({ b, k, s, note });
-    }
-    return { ...res, profit, open: cur.lost, step: cur.step, T: cur.T };
-  }
-
-  function mgChart(pts, bank) {
-    if (pts.length < 3) return '';
-    const vals = pts.map(v => bank + v);
-    const min = Math.min(...vals), max = Math.max(...vals), span = max - min || 1;
-    const W = 300, H = 110, x = i => (i / (vals.length - 1)) * W, y = v => H - ((v - min) / span) * H;
-    return `
-      <div class="chart">
-        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Робочий депозит">
-          <line x1="0" x2="${W}" y1="${y(bank).toFixed(1)}" y2="${y(bank).toFixed(1)}" class="chart-base"/>
-          <polyline points="${vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}" class="chart-line ${vals[vals.length - 1] >= bank ? 'up' : 'down'}"/>
-        </svg>
-        <div class="chart-axis"><span>${money(max)}</span><span>${money(min)}</span></div>
-      </div>`;
-  }
-
-  // План для однієї ставки (ІТБ 1 або ІТБ 1.5) за всіма зіграними рекомендаціями.
+  // Статистика й драбина для однієї ставки (ІТБ 1 або ІТБ 1.5) за всіма зіграними рекомендаціями.
   function mgPlan(list) {
-    const { bank, stake, steps } = state.mg;
+    const { bank, stake } = M(), { steps } = state.mg;
     const decided = list.filter(b => b.s === 'win' || b.s === 'loss');
     if (decided.length < 5) return null;
     const wins = decided.filter(b => b.s === 'win').length;
     const odds = list.map(b => b.odds * MG_MARGIN).sort((a, b) => a - b);
     const k = Math.round(odds[Math.floor(odds.length / 2)] * 100) / 100;
-    const T = stake * (k - 1);
-    const lad = mgLadder(T, k, steps);
+    const T = stake * (k - 1);   // виграш першої ставки
+    const lad = mgLadder(k, steps);
     const runs = runsOf(list);
     return {
-      list, decided, wins, hit: wins / decided.length, k, T, lad,
+      decided, wins, hit: wins / decided.length, k, T, lad,
       cover: lad.filter(x => x.total <= bank).length,
       lossRuns: runs.filter(r => r.s === 'loss'), winRuns: runs.filter(r => r.s === 'win'),
-      sim: mgSimulate(list, stake, bank),
     };
   }
 
   const pct1 = p => (p >= 0.1 ? pct(p) : `${(p * 100).toFixed(1)}%`);
 
   function mgCard(label, P) {
-    const { bank, stake, steps } = state.mg;
+    const { bank, mult } = M(), { steps } = state.mg;
     if (!P) return `<section class="card"><h3>Мартингейл · ${label}</h3><p class="hint top">Замало зіграних ставок для розрахунку.</p></section>`;
-    const { decided, wins, hit, k, T, lad, cover, lossRuns, winRuns, sim } = P;
+    const { decided, wins, hit, k, T, lad, cover, lossRuns, winRuns } = P;
     const q = 1 - hit;
     const longest = rs => rs.reduce((m, r) => (!m || r.bets.length >= m.bets.length ? r : m), null);
     const ll = longest(lossRuns), lw = longest(winRuns);
     const seen = n => lossRuns.filter(r => r.bets.length >= n).length;
     const risk = cover ? runRisk(q, cover, 100) : 1;
     const used = cover ? lad[cover - 1].total : 0;
-    const verdict = `<div class="notice ${risk > 0.3 ? 'error' : ''}">Депозит ${money(bank)} витримує <b>${cover}</b> ${plural(cover, 'програш', 'програші', 'програшів')} поспіль (поставлено ${money(used)}); ${cover + 1}-ї ставки вже не вистачить.
-      У статистиці найдовша серія програшів — <b>${ll ? ll.bets.length : 0}</b>. З влучністю ${pct(hit)} шанс, що за 100 ставок трапиться ${cover} ${plural(cover, 'програш', 'програші', 'програшів')} поспіль, — <b>${pct1(risk)}</b>: тоді втрачається ${money(used)}, а це ${Math.round(used / T)} виграних серій по ${Math.round(T)} грн.</div>`;
     return `
       <section class="card"><h3>Мартингейл · ${label}</h3>
         <div class="kpis">
@@ -590,33 +552,22 @@
         </div>
         <div class="kpis kpis2">
           <div><b>${k.toFixed(2)}</b><span>типовий кф<br>(медіана)</span></div>
-          <div><b class="ok">+${Math.round(T)} грн</b><span>виграш<br>за серію</span></div>
+          <div><b class="ok">+${Math.round(T)} грн</b><span>виграш<br>на 1-му кроці</span></div>
           <div><b class="${cover >= steps ? 'ok' : 'bad'}">${cover}</b><span>програшів поспіль<br>витримує депозит</span></div>
         </div>
-        ${verdict}
+        <div class="notice ${risk > 0.3 ? 'error' : ''}">${cover >= steps
+          ? `Серія — до <b>${steps}</b> матчів, на всі ставки потрібно ${money(used)} — депозит ${money(bank)} це витримує. Якщо програно всі ${steps}, серія закінчується з втратою ${money(used)} і починається знову з ${state.mg.stake} грн.`
+          : `Депозит ${money(bank)} витримує лише <b>${cover}</b> ${plural(cover, 'програш', 'програші', 'програшів')} поспіль (поставлено ${money(used)}); ${cover + 1}-ї ставки вже не вистачить.`}
+          У статистиці найдовша серія програшів — <b>${ll ? ll.bets.length : 0}</b>. З влучністю ${pct(hit)} шанс, що за 100 ставок трапиться ${cover} ${plural(cover, 'програш', 'програші', 'програшів')} поспіль, — <b>${pct1(risk)}</b>: тоді втрачається ${money(used)}.</div>
         <table class="markets dr-agg dr-ladder"><thead><tr><th>Крок</th><th>Ставка</th><th>Усього</th><th>Виграш</th><th>Шанс</th></tr></thead><tbody>${lad.map((x, i) => `
-          <tr class="${x.total > bank ? 'over' : ''}"><td>${i + 1}</td><td><b>${x.s} грн</b></td><td>${x.total} грн${x.total > bank ? '<small>більше депозиту</small>' : ''}</td><td class="ok">+${Math.round(x.net)} грн</td>
+          <tr class="${x.total > bank ? 'over' : ''}"><td>${i + 1}</td><td><b>${x.s} грн</b></td><td>${x.total} грн${x.total > bank ? '<small>більше депозиту</small>' : ''}</td><td class="${x.net >= 0 ? 'ok' : 'bad'}">${uah(x.net)}</td>
             <td>${pct1(Math.pow(q, i))}<small>${i ? `було ${seen(i)} ${plural(seen(i), 'серія', 'серії', 'серій')} з ${i}+ програшів` : 'перша ставка'}</small></td></tr>`).join('')}</tbody></table>
-        <p class="hint">«Шанс» — ймовірність, що серія дійде до цього кроку (усі попередні ставки програли), за влучністю ${pct(hit)}; під ним — скільки разів таке вже було. Таблиця — при кф ${k.toFixed(2)}: з вищим кф ставки менші, з нижчим — більші. Щоб витримати ${steps} програшів поспіль, потрібен депозит <b>${money(lad[lad.length - 1].total)}</b>.${label === 'ІТБ 1' ? ' Рівно 1 гол — повернення: крок не змінюється.' : ''}</p>
-        <h3 class="dr-sub">Якби ставили так з ${dateOf(P.list[0].r.ev.ts)}</h3>
-        <div class="kpis">
-          <div><b class="${sim.profit - sim.open >= 0 ? 'ok' : 'bad'}">${uah(sim.profit - sim.open)}</b><span>результат${sim.open ? `<br>з них у грі −${sim.open} грн` : ''}</span></div>
-          <div><b>${sim.cycles}</b><span>виграних серій<br>ставок ${sim.placed}</span></div>
-          <div><b class="${sim.busts ? 'bad' : 'ok'}">${sim.busts}</b><span>разів не вистачило<br>депозиту</span></div>
-        </div>
-        ${mgChart(sim.pts, bank)}
-        <p class="hint">По одній ставці за раз, як у ланцюжку 1: ${sim.overlap} ${plural(sim.overlap, 'матч пропущено', 'матчі пропущено', 'матчів пропущено')}, бо починались, коли попередній ще йшов. Найдовше програшів поспіль — ${sim.maxStep}, найбільша ставка — ${sim.maxStake} грн.</p>
-        <details class="more"><summary>Усі ставки плану · ${sim.log.length}</summary>
-          <table class="markets dr-agg"><thead><tr><th>Матч</th><th>Ставка</th><th>Результат</th></tr></thead><tbody>${sim.log.slice().reverse().map(x => `
-            <tr><td>${esc(x.b.r.team.short || x.b.r.team.name)} ${x.b.r.side === 'home' ? 'vs' : '@'} ${esc(x.b.r.opp.short || x.b.r.opp.name)}<small>${dateOf(x.b.r.ev.ts)} ${timeOf(x.b.r.ev.ts)} · забила ${x.b.r.g}</small></td>
-              <td><b>${x.s} грн</b><small>кф ${x.k.toFixed(2)}</small></td>
-              <td class="${x.b.s === 'win' ? 'ok' : x.b.s === 'loss' ? 'bad' : ''}">${ICON[x.b.s]}<small>${x.note}</small></td></tr>`).join('')}</tbody></table>
-        </details>
+        <p class="hint">«Шанс» — ймовірність, що серія дійде до цього кроку (усі попередні ставки програли), за влучністю ${pct(hit)}; під ним — скільки разів таке вже було. Ставки ×${mult} не залежать від кф; «Виграш» — чистий результат серії, якщо цей крок зіграє, при кф ${k.toFixed(2)}. Виграш відіграє все програне, лише якщо кф ≥ ${(mult / (mult - 1)).toFixed(2)}; з нижчим кф виграш на пізньому кроці буде в мінус. Щоб витримати ${steps} програшів поспіль, потрібен депозит <b>${money(lad[lad.length - 1].total)}</b>.${label === 'ІТБ 1' ? ' Рівно 1 гол — повернення: крок не змінюється.' : ''}</p>
       </section>`;
   }
 
-  // Ланцюжки: у кожному наступний матч починається не раніше, ніж закінчився попередній (≥ 2 год від
-  // початку), тож ставку робиш, уже знаючи результат. Ланцюжок 1 — найдовший, з решти — 2-й і т. д.
+  // Ланцюжки: у кожному наступний матч починається не раніше ніж через 2 год 15 хв після початку
+  // попереднього — ставку робиш, уже знаючи результат. Ланцюжок 1 — найдовший, з решти — 2-й і т. д.
   function mgChains(recs) {
     let left = recs.slice().sort((a, b) => a.ev.ts - b.ev.ts || b.it15.p - a.it15.p);
     const chains = [];
@@ -632,80 +583,146 @@
     return chains;
   }
 
-  // Ставки ланцюжка, якщо всі попередні в ньому програють. start — поточний стан серії { lost, step, T }.
-  function mgChainStakes(chain, P, key, start) {
-    const cur = { ...start };
-    return chain.map(r => {
+  // Ведення серії по ланцюжку. Зіграні матчі розраховуються за результатом (виграш — серія закінчена,
+  // програш — наступний крок, повернення — той самий крок); для матчів, що ще не зіграні, сума — якщо всі
+  // попередні програють. start — стан серії на початку ланцюжка { step, lost }.
+  function mgRun(chain, key, start, P) {
+    const cur = { step: start.step, lost: start.lost };
+    let profit = 0, next = null;
+    const rows = chain.map((r, i) => {
       const k = MG_MARGIN / r[key].p;
       if (!P) return { k };
-      const { s, bust } = mgNext(cur, state.mg.stake, k, state.mg.bank);
-      cur.lost += s; cur.step++;
-      return { k, s, bust, step: cur.step };
+      const { s, bust } = mgNext(cur);
+      const step = cur.step + 1;
+      const st = r.done ? (key === 'it1' ? r.st1 : r.st15) : null;
+      let pl = null;
+      if (st === 'win') { pl = s * (k - 1) - cur.lost; profit += pl; cur.lost = 0; cur.step = 0; }
+      else if (st === 'loss') { pl = -s; cur.lost += s; cur.step++; }
+      else if (st === 'void') pl = 0;
+      else {
+        if (next == null) next = i;
+        cur.lost += s; cur.step++;   // ще не зіграно: далі — якщо програє
+      }
+      return { k, s, step, bust, st, pl };
     });
+    return { rows, profit, next };
   }
 
-  // Розклад: найближчі рекомендації, розбиті на ланцюжки. Ланцюжок не обривається з кінцем дня — серія
-  // програшів продовжується матчами наступних днів, доки не буде виграшу. Ланцюжок 1 продовжує поточну
-  // серію з уже зіграних рекомендацій.
+  // Розклад: від старту (state.mg.track) рекомендації розбиваються на 5 варіантів — ланцюжків, що не
+  // перетинаються. Кожен варіант — окрема серія: до 6 матчів, після виграшу — нова з першої ставки.
+  // Зіграні матчі лишаються в ньому з результатом. Крок і програне на старті — для варіанта, який граєш.
   function mgSchedule(d, plans) {
-    const upcoming = upcomingRecs(d).filter(r => r.ev.state !== 'post');
-    if (!upcoming.length) return `<section class="card"><h3>Розклад ставок</h3><p class="hint top">Найближчими днями рекомендацій немає.</p></section>`;
-    const chains = mgChains(upcoming);
     const now = Date.now() / 1000;
-    const { stake } = state.mg;
-    const stateOf = P => (P ? { lost: P.sim.open, step: P.sim.step, T: P.sim.T } : { lost: 0, step: 0, T: 0 });
-    const cell = x => (x.s == null ? `<td>—<small>кф ${x.k.toFixed(2)}</small></td>`
-      : `<td class="${x.bust ? 'mg-bust' : ''}"><b>${x.s} грн</b><small>${x.bust ? 'депозит вичерпано, знову з 1-ї · ' : ''}крок ${x.step} · кф ${x.k.toFixed(2)}</small></td>`);
-    const table = (c, s15, s1) => {
-      const a = mgChainStakes(c, plans.it15, 'it15', s15), b = mgChainStakes(c, plans.it1, 'it1', s1);
+    const tr = M().track;
+    const played = d.recs.filter(r => r.done && r.ev.ts >= tr.start);
+    const upcoming = upcomingRecs(d).filter(r => !r.done && r.ev.ts >= tr.start);
+    const variants = mgChains([...played, ...upcoming]).slice(0, MG_VARIANTS);
+    const mine = Math.min(tr.variant || 0, Math.max(0, variants.length - 1));
+    const { stake, bank } = M();
+    const zero = { step: 0, lost: 0 };
+    const runsOf2 = (c, i) => ({ it15: mgRun(c, 'it15', i === mine ? tr.it15 : zero, plans.it15), it1: mgRun(c, 'it1', i === mine ? tr.it1 : zero, plans.it1) });
+    const cell = (x, isNext) => {
+      if (x.s == null) return `<td>—<small>кф ${x.k.toFixed(2)}</small></td>`;
+      const res = x.st ? `${ICON[x.st]} ${x.st === 'void' ? 'повернення' : uah(x.pl)}` : '';
+      const cls = x.st === 'win' ? 'ok' : x.st === 'loss' ? 'bad' : x.bust ? 'mg-bust' : '';
+      return `<td class="${cls} ${isNext ? 'mg-next' : ''}"><b>${x.s} грн</b><small>${x.bust ? 'попередню серію програно, нова з 1-ї · ' : ''}крок ${x.step} · кф ${x.k.toFixed(2)}${res ? `<br>${res}` : ''}</small></td>`;
+    };
+    const table = (c, rowsA, rowsB, nextIdx) => {
       let day = null;
-      return `<table class="markets dr-agg mg-sched"><thead><tr><th>Ставка</th><th>Команда</th><th>ІТБ 1.5</th><th>ІТБ 1</th></tr></thead><tbody>${c.map((r, j) => {
+      return `<table class="markets dr-agg mg-sched"><thead><tr><th>Матч</th><th>Команда</th><th>ІТБ 1.5</th><th>ІТБ 1</th></tr></thead><tbody>${c.map((r, j) => {
         const ds = dayStart(r.ev.ts), head = ds !== day ? `<tr class="mg-day"><td colspan="4">${esc(dayLabel(Math.round((ds - dayStart(now)) / 86400)))}</td></tr>` : '';
         day = ds;
-        return `${head}<tr><td><b>${j + 1}. <span class="${r.ev.state === 'in' ? 'live' : ''}">${r.ev.state === 'in' ? 'LIVE' : timeOf(r.ev.ts)}</span></b><small>кінець ≈ ${timeOf(r.ev.ts + MG_GAP)}</small></td>
+        const status = r.done ? `${r.ev.home.score}:${r.ev.away.score}` : r.ev.state === 'in' ? `<span class="live">LIVE ${r.ev.home.score ?? 0}:${r.ev.away.score ?? 0}</span>` : timeOf(r.ev.ts);
+        return `${head}<tr class="${r.done ? 'mg-done' : ''} ${j === nextIdx ? 'mg-next-row' : ''}"><td><b>${j + 1}. ${status}</b><small>${r.done ? `забила ${r.g}` : r.ev.state === 'in' ? `йде, кінець ≈ ${timeOf(r.ev.ts + MG_END)}` : `${j === nextIdx ? 'наступна · ' : ''}кінець ≈ ${timeOf(r.ev.ts + MG_END)}`}</small></td>
           <td><b>${esc(r.team.short || r.team.name)}</b> ${r.side === 'home' ? 'vs' : '@'} ${esc(r.opp.short || r.opp.name)}<small>${esc(leagueOf(r.slug).short)} · без голів ${r.n}</small></td>
-          ${cell(a[j])}${cell(b[j])}</tr>`;
+          ${cell(rowsA[j], j === nextIdx)}${cell(rowsB[j], j === nextIdx)}</tr>`;
       }).join('')}</tbody></table>`;
     };
-    const cur = (label, P) => {
-      const s = stateOf(P);
-      return s.step ? `${label} — ${s.step} ${plural(s.step, 'програш', 'програші', 'програшів')} поспіль (−${s.lost} грн), наступна ставка — крок ${s.step + 1}` : `${label} — нова серія, ставка ${stake} грн`;
+    const variant = (c, i) => {
+      const runs = runsOf2(c, i), nextIdx = runs.it15.next ?? runs.it1.next;
+      const nx = nextIdx != null ? c[nextIdx] : null;
+      const sum = v => `<b class="${v >= 0 ? 'ok' : 'bad'}">${uah(v)}</b>`;
+      return `
+        <details class="mg-variant ${i === mine ? 'mine' : ''}" ${i === mine ? 'open' : ''}>
+          <summary><b>Варіант ${i + 1}${i === mine ? ' · мій' : ''}</b> · ${matches(c.length)}
+            <small>${nx ? `наступна: ${dateOf(nx.ev.ts)} ${timeOf(nx.ev.ts)} ${esc(nx.team.short || nx.team.name)} — ІТБ 1.5 ${runs.it15.rows[nextIdx].s ?? '—'} грн, ІТБ 1 ${runs.it1.rows[nextIdx].s ?? '—'} грн` : 'усі матчі зіграні'}</small></summary>
+          <p class="mg-now">Виграні серії: ІТБ 1.5 ${sum(runs.it15.profit)} · ІТБ 1 ${sum(runs.it1.profit)}${i === mine ? '' : ` <button class="chip" data-mg-variant="${i}">Граю цей</button>`}</p>
+          ${table(c, runs.it15.rows, runs.it1.rows, nextIdx)}
+        </details>`;
     };
+    const startDate = new Date(tr.start * 1000);
+    const startTxt = `${startDate.getDate()}.${pad(startDate.getMonth() + 1)} ${pad(startDate.getHours())}:${pad(startDate.getMinutes())}`;
+    const stepInput = (key, label) => `
+      <label>${label}: крок зараз <input class="mg-track" data-key="${key}" data-f="step" type="number" inputmode="numeric" min="1" max="30" value="${tr[key].step + 1}"></label>
+      <label>програно в серії, грн <input class="mg-track" data-key="${key}" data-f="lost" type="number" inputmode="numeric" min="0" step="1" value="${tr[key].lost}"></label>`;
     return `
-      <section class="card"><h3>Розклад ставок</h3>
-        <p class="hint top">${matches(upcoming.length)} розбито на ${chains.length} ${plural(chains.length, 'ланцюжок', 'ланцюжки', 'ланцюжків')}. У ланцюжку кожен наступний матч починається вже після кінця попереднього — ставиш, коли знаєш результат.</p>
-        <div class="mg-chain main"><h4>Ланцюжок 1 · ${matches(chains[0].length)}</h4>
-          <p class="mg-now">Зараз: ${cur('ІТБ 1.5', plans.it15)}; ${cur('ІТБ 1', plans.it1)}.</p>
-          ${table(chains[0], stateOf(plans.it15), stateOf(plans.it1))}
+      <section class="card"><h3>Серії ставок · ${variants.length} ${plural(variants.length, 'варіант', 'варіанти', 'варіантів')}</h3>
+        <p class="hint top">З ${startTxt} найближчі рекомендації розбиті на варіанти — ланцюжки матчів, що не перетинаються. У ланцюжку наступний матч починається щонайменше через 20 хв після кінця попереднього: бачиш результат і встигаєш поставити. Серія — до ${state.mg.steps} матчів; після виграшу в будь-якому з них — нова серія з ${stake} грн. Усе перераховується саме після кожного матчу.</p>
+        <div class="mg-inputs mg-start">
+          ${stepInput('it15', `Варіант ${mine + 1} · ІТБ 1.5`)}
+          ${stepInput('it1', `Варіант ${mine + 1} · ІТБ 1`)}
         </div>
-        <p class="hint">Як ставити: йди по рядках згори вниз. Суми в рядках — якщо всі попередні ставки програли. <b>Виграш</b> — серія закінчена, наступна ставка знову ${stake} грн, далі суми рахуй з кроку 1 (таблиця кроків нижче). <b>Програш</b> — став суму з наступного рядка. Якщо серія не закінчилась за день, продовжуй матчами наступного дня.</p>
-        ${chains.length > 1 ? `<details class="more"><summary>Ще ${chains.length - 1} ${plural(chains.length - 1, 'ланцюжок', 'ланцюжки', 'ланцюжків')} — матчі, що накладаються на ланцюжок 1</summary>
-          <p class="hint">Кожен — окрема серія зі своїм депозитом ${money(state.mg.bank)}. З одним депозитом грай лише ланцюжок 1.</p>
-          ${chains.slice(1).map((c, i) => `<div class="mg-chain"><h4>Ланцюжок ${i + 2} · ${matches(c.length)}</h4>${table(c, { lost: 0, step: 0, T: 0 }, { lost: 0, step: 0, T: 0 })}</div>`).join('')}
-        </details>` : ''}
+        <div class="btn-row"><button class="btn ghost" data-mg-restart="1">Почати з найближчих матчів</button></div>
+        <p class="hint">Крок і суму вказуй для найближчого матчу свого варіанта: 1 — нова серія. Якщо змінити крок, сума програного підставиться за таблицею кроків — виправ її, якщо ставив інакше. Інші варіанти — з першої ставки.</p>
+        ${variants.length ? variants.map(variant).join('') : '<p class="hint">Найближчими днями рекомендацій немає.</p>'}
+        <p class="hint">Суми для незіграних матчів — якщо всі попередні в серії програють; після виграшу додаток перерахує їх з ${stake} грн. Серія може тривати кілька днів. Кожен варіант — окремий депозит ${money(bank)}; з одним депозитом грай один варіант.</p>
       </section>`;
+  }
+
+  // Старт серії: з найближчого матчу (зараз), крок 1 для обох ставок, якщо не вказано інше.
+  function mgRestart(keep) {
+    M().track = { start: Math.floor(Date.now() / 1000), variant: (M().track && M().track.variant) || 0, it15: keep ? keep.it15 : { step: 0, lost: 0 }, it1: keep ? keep.it1 : { step: 0, lost: 0 } };
+    mgSave();
+  }
+
+  // Поля вкладки: налаштування стратегії й стан серії на старті.
+  function mgInput(e) {
+    const t = e.target, v = Number(t.value), c = M();
+    if (t.classList.contains('mg-track')) {
+      const s = c.track[t.dataset.key];
+      if (t.dataset.f === 'step') {
+        s.step = Math.max(0, Math.round(v || 1) - 1);
+        // Програне до цього кроку — за таблицею кроків (з медіанним кф).
+        const P = state.mgPlans && state.mgPlans[t.dataset.key];
+        s.lost = P ? P.lad.slice(0, s.step).reduce((sum, x) => sum + x.s, 0) : 0;
+      } else s.lost = Math.max(0, Math.round(v) || 0);
+    } else if (t.id === 'mg-bank') c.bank = Math.max(10, v || MG_DEFAULT.bank);
+    else if (t.id === 'mg-stake') c.stake = Math.max(1, Math.round(v) || MG_DEFAULT.stake);
+    else if (t.id === 'mg-mult') c.mult = Math.max(1.5, v || MG_DEFAULT.mult);
+    else if (t.id === 'mg-steps') state.mg.steps = Math.min(20, Math.max(2, Math.round(v) || 10));
+    else return false;
+    mgSave();
+    return true;
+  }
+  function mgClick(b) {
+    if (b.dataset.mgVariant) { state.mg.track.variant = Number(b.dataset.mgVariant); mgSave(); return true; }
+    if (b.dataset.mgRestart) { mgRestart(); return true; }
+    return false;
   }
 
   // Вкладка «Мартингейл»: стратегія для рекомендацій «Сухих серій» (режим «Чемпіонат»), окремо для ІТБ 1.5 і ІТБ 1.
   function renderMg(d) {
-    const { bank, stake, steps } = state.mg;
+    const { bank, stake, mult, steps } = state.mg;
+    if (!state.mg.track) mgRestart();
     const recs = d.recs.filter(r => r.done && r.ev.ts >= LAUNCH);
     const list = key => recs.map(r => ({ r, s: key === 'it1' ? r.st1 : r.st15, p: r[key].p, odds: 1 / r[key].p }))
       .sort((a, b) => a.r.ev.ts - b.r.ev.ts || b.p - a.p);
     const plans = { it15: mgPlan(list('it15')), it1: mgPlan(list('it1')) };
+    state.mgPlans = plans;
     $view.innerHTML = `
       <section class="card">
         <div class="mg-inputs">
           <label>Депозит, грн <input id="mg-bank" type="number" inputmode="numeric" min="50" step="50" value="${bank}"></label>
-          <label>Перша ставка, грн <input id="mg-stake" type="number" inputmode="numeric" min="1" step="5" value="${stake}"></label>
-          <label>Кроків у таблиці <input id="mg-steps" type="number" inputmode="numeric" min="2" max="20" value="${steps}"></label>
+          <label>Перша ставка, грн <input id="mg-stake" type="number" inputmode="numeric" min="1" step="1" value="${stake}"></label>
+          <label>Множник <input id="mg-mult" type="number" inputmode="decimal" min="1.5" step="0.5" value="${mult}"></label>
+          <label>Матчів у серії <input id="mg-steps" type="number" inputmode="numeric" min="2" max="20" value="${steps}"></label>
         </div>
-        <p class="hint">Мартингейл для рекомендацій «Сухих серій», окремо для ІТБ 1.5 і ІТБ 1, за всіма зіграними рекомендаціями з 20.10. Після програшу ставка росте так, щоб виграш відіграв усе програне і дав ${Math.round(stake)} × (кф − 1) грн, як перша ставка; після виграшу — знову ${stake} грн.</p>
+        <p class="hint">Перша ставка ${stake} грн, після кожного програшу ставка ×${mult} (${[0, 1, 2, 3, 4].map(i => Math.round(stake * Math.pow(mult, i))).join(' → ')} → …), після виграшу — знову ${stake} грн. Окремо для ІТБ 1.5 і ІТБ 1 на рекомендації «Сухих серій».</p>
       </section>
       ${mgSchedule(d, plans)}
       ${mgCard('ІТБ 1.5', plans.it15)}
       ${mgCard('ІТБ 1', plans.it1)}
-      <p class="hint pad">Кф у розрахунку — справедливий з моделі мінус 7% (приблизно як у букмекера). Перед ставкою дивись реальний кф: ставка = (програно в серії + ${stake} × (кф − 1)) ÷ (кф − 1). Мартингейл не робить ставки вигіднішими — він міняє часті дрібні виграші на рідкісну велику втрату. 18+.</p>`;
+      <p class="hint pad">Кф у розрахунку — справедливий з моделі мінус 7% (приблизно як у букмекера). Перед ставкою перевір реальний кф: якщо він нижчий за ${(mult / (mult - 1)).toFixed(2)}, виграш не відіграє програне в серії. Мартингейл не робить ставки вигіднішими — він міняє часті дрібні виграші на рідкісну велику втрату. 18+.</p>`;
   }
 
   // Рядок таблиці: ставок, виграно / повернення / програно, % влучності (без повернень), очікувалось, прибуток, ROI.
@@ -854,16 +871,9 @@
     if (!b || !state.data) return;
     if (b.dataset.period) { state.period = b.dataset.period; route(true); }
     else if (b.dataset.allview) { state.allView = b.dataset.allview; route(true); }
+    else if (mgClick(b)) route(true);
   });
-  $view.addEventListener('change', e => {
-    if (!/^mg-(bank|stake|steps)$/.test(e.target.id)) return;
-    const v = Number(e.target.value);
-    if (e.target.id === 'mg-bank') state.mg.bank = Math.max(10, v || 500);
-    else if (e.target.id === 'mg-stake') state.mg.stake = Math.max(1, Math.round(v) || 25);
-    else state.mg.steps = Math.min(20, Math.max(2, Math.round(v) || 10));
-    try { localStorage.setItem('dr_mg', JSON.stringify(state.mg)); } catch {}
-    route(true);
-  });
+  $view.addEventListener('change', e => { if (mgInput(e)) route(true); });
   document.getElementById('refresh').addEventListener('click', async () => {
     $title.textContent = 'Оновлення…';
     await load(true);

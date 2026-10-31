@@ -59,5 +59,18 @@
 .mg-sched.dr-agg tr.mg-day td { text-align: left; padding-top: 12px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .mg-sched td.mg-bust, .mg-sched td.mg-bust small { color: var(--lo); }
 .mg-now { margin: 4px 0 8px; font-size: 13px; }
+.mg-now small { color: var(--muted); }
+.mg-start { margin-top: 10px; }
+.mg-start label { flex: 1 1 140px; }
+.mg-start input { width: 100%; }
+.mg-sched tr.mg-done td { opacity: .8; }
+.mg-variant { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.mg-variant.mine { border-color: var(--accent); }
+.mg-variant summary { cursor: pointer; list-style: none; display: grid; gap: 2px; font-size: 14px; }
+.mg-variant summary::-webkit-details-marker { display: none; }
+.mg-variant summary small { font-size: 12px; color: var(--muted); }
+.mg-variant.mine summary b { color: var(--accent); }
+.mg-variant .chip { margin-left: 8px; }
+.mg-sched tr.mg-next-row td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .card .notice.error { margin-bottom: 12px; font-size: 13px; }
 .dr-dist td:not(:first-child), .dr-dist th:not(:first-child) { text-align: center; }
