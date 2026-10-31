@@ -453,7 +453,7 @@
   }
 
   // ---------- Мартингейл ----------
-  // Депозит 2000 грн, перша ставка 5 грн, після кожного програшу ставка ×3 (5 → 15 → 45 → 135 → 405 → 1215),
+  // Депозит 10 000 грн, перша ставка 5 грн, після кожного програшу ставка ×3 (5 → 15 → … → 1215 → 3645), серія до 7,
   // після виграшу серія закінчена — знову перша ставка (прибуток виводиться, робочий депозит той самий).
   // Кф — справедливий з моделі мінус 7% (так приблизно дає букмекер); у драбині — медіанний кф ставки.
   //
@@ -467,11 +467,13 @@
   const MG_GAP = 135 * 60;
   const MG_VARIANTS = 5;
   // steps — матчів у серії (і в кожному варіанті розкладу).
-  const MG_DEFAULT = { bank: 2000, stake: 5, mult: 3, steps: 7, v: 2 };
+  const MG_DEFAULT = { bank: 10000, stake: 5, mult: 3, steps: 7, v: 3 };
   function mgLoad() {
     let s = {};
     try { s = JSON.parse(localStorage.getItem('dr_mg2') || '{}'); } catch {}
-    if ((s.v || 1) < 2) { s.steps = MG_DEFAULT.steps; s.v = 2; }   // серія стала 7 матчів (було 6)
+    if ((s.v || 1) < 2) s.steps = MG_DEFAULT.steps;   // серія стала 7 матчів (було 6)
+    if ((s.v || 1) < 3) s.bank = MG_DEFAULT.bank;     // депозит став 10 000 грн (було 2000)
+    s.v = MG_DEFAULT.v;
     return { ...MG_DEFAULT, ...s };
   }
   const mgSave = () => { try { localStorage.setItem('dr_mg2', JSON.stringify(state.mg)); } catch {} };
