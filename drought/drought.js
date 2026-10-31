@@ -566,22 +566,27 @@
       </section>`;
   }
 
-  // Ланцюжки: у кожному наступний матч починається не раніше ніж через 2 год 15 хв після початку
-  // попереднього — ставку робиш, уже знаючи результат. Ланцюжок 1 — найдовший, з решти — 2-й і т. д.
-  function mgChains(recs) {
-    let left = recs.slice().sort((a, b) => a.ev.ts - b.ev.ts || b.it15.p - a.it15.p);
+  // Варіанти — n ланцюжків, у кожному наступний матч починається не раніше ніж через 2 год 15 хв після
+  // початку попереднього (ставку робиш, уже знаючи результат). Матчі розкладаються за часом: кожен іде
+  // у вільний на той момент ланцюжок, де поки найменше матчів, — так варіанти виходять рівними. Матч, на
+  // який усі ланцюжки зайняті, не входить нікуди. Нові рекомендації доповнюють варіанти самі.
+  function mgChains(recs, n) {
+    const list = recs.slice().sort((a, b) => a.ev.ts - b.ev.ts || b.it15.p - a.it15.p);
     const chains = [];
-    while (left.length) {
-      const chain = [], rest = [];
-      let free = -Infinity;
-      for (const r of left) {
-        if (r.ev.ts >= free) { chain.push(r); free = r.ev.ts + MG_GAP; } else rest.push(r);
-      }
-      chains.push(chain);
-      left = rest;
+    let skipped = 0;
+    for (const r of list) {
+      if (chains.length < n) { chains.push({ list: [r], free: r.ev.ts + MG_GAP }); continue; }
+      const fit = chains.filter(c => r.ev.ts >= c.free);
+      if (!fit.length) { skipped++; continue; }
+      const c = fit.reduce((a, b) => (b.list.length < a.list.length ? b : a));
+      c.list.push(r);
+      c.free = r.ev.ts + MG_GAP;
     }
-    return chains;
+    return { chains: chains.map(c => c.list), skipped };
   }
+
+  const mgGoals = r => (r.done ? r.g : r.ev[r.side].score ?? 0);
+  const mgEarlyWin = r => !r.done && r.ev.state === 'in' && mgGoals(r) >= 2;
 
   // Ведення серії по ланцюжку. Зіграні матчі розраховуються за результатом (виграш — серія закінчена,
   // програш — наступний крок, повернення — той самий крок); для матчів, що ще не зіграні, сума — якщо всі
@@ -594,7 +599,8 @@
       if (!P) return { k };
       const { s, bust } = mgNext(cur);
       const step = cur.step + 1;
-      const st = r.done ? (key === 'it1' ? r.st1 : r.st15) : null;
+      // Команда вже забила 2 у матчі, що йде, — ставка зайшла достроково (голи не зникнуть).
+      const st = r.done ? (key === 'it1' ? r.st1 : r.st15) : mgEarlyWin(r) ? 'win' : null;
       let pl = null;
       if (st === 'win') { pl = s * (k - 1) - cur.lost; profit += pl; cur.lost = 0; cur.step = 0; }
       else if (st === 'loss') { pl = -s; cur.lost += s; cur.step++; }
@@ -616,7 +622,7 @@
     const tr = M().track;
     const played = d.recs.filter(r => r.done && r.ev.ts >= tr.start);
     const upcoming = upcomingRecs(d).filter(r => !r.done && r.ev.ts >= tr.start);
-    const variants = mgChains([...played, ...upcoming]).slice(0, MG_VARIANTS);
+    const { chains: variants, skipped } = mgChains([...played, ...upcoming], MG_VARIANTS);
     const mine = Math.min(tr.variant || 0, Math.max(0, variants.length - 1));
     const { stake, bank } = M();
     const zero = { step: 0, lost: 0 };
@@ -633,7 +639,7 @@
         const ds = dayStart(r.ev.ts), head = ds !== day ? `<tr class="mg-day"><td colspan="4">${esc(dayLabel(Math.round((ds - dayStart(now)) / 86400)))}</td></tr>` : '';
         day = ds;
         const status = r.done ? `${r.ev.home.score}:${r.ev.away.score}` : r.ev.state === 'in' ? `<span class="live">LIVE ${r.ev.home.score ?? 0}:${r.ev.away.score ?? 0}</span>` : timeOf(r.ev.ts);
-        return `${head}<tr class="${r.done ? 'mg-done' : ''} ${j === nextIdx ? 'mg-next-row' : ''}"><td><b>${j + 1}. ${status}</b><small>${r.done ? `забила ${r.g}` : r.ev.state === 'in' ? `йде, кінець ≈ ${timeOf(r.ev.ts + MG_END)}` : `${j === nextIdx ? 'наступна · ' : ''}кінець ≈ ${timeOf(r.ev.ts + MG_END)}`}</small></td>
+        return `${head}<tr class="${r.done ? 'mg-done' : ''} ${j === nextIdx ? 'mg-next-row' : ''}"><td><b>${j + 1}. ${status}</b><small>${r.done ? `забила ${r.g}` : mgEarlyWin(r) ? `забила ${mgGoals(r)} — ставка зайшла` : r.ev.state === 'in' ? `йде, кінець ≈ ${timeOf(r.ev.ts + MG_END)}` : `${j === nextIdx ? 'наступна · ' : ''}кінець ≈ ${timeOf(r.ev.ts + MG_END)}`}</small></td>
           <td><b>${esc(r.team.short || r.team.name)}</b> ${r.side === 'home' ? 'vs' : '@'} ${esc(r.opp.short || r.opp.name)}<small>${esc(leagueOf(r.slug).short)} · без голів ${r.n}</small></td>
           ${cell(rowsA[j], j === nextIdx)}${cell(rowsB[j], j === nextIdx)}</tr>`;
       }).join('')}</tbody></table>`;
@@ -665,7 +671,7 @@
         <div class="btn-row"><button class="btn ghost" data-mg-restart="1">Почати з найближчих матчів</button></div>
         <p class="hint">Крок і суму вказуй для найближчого матчу свого варіанта: 1 — нова серія. Якщо змінити крок, сума програного підставиться за таблицею кроків — виправ її, якщо ставив інакше. Інші варіанти — з першої ставки.</p>
         ${variants.length ? variants.map(variant).join('') : '<p class="hint">Найближчими днями рекомендацій немає.</p>'}
-        <p class="hint">Суми для незіграних матчів — якщо всі попередні в серії програють; після виграшу додаток перерахує їх з ${stake} грн. Серія може тривати кілька днів. Кожен варіант — окремий депозит ${money(bank)}; з одним депозитом грай один варіант.</p>
+        <p class="hint">${skipped ? `${matches(skipped)} не ввійшли в жоден варіант — на їхній час усі 5 ланцюжків зайняті. ` : ''}Варіанти доповнюються самі, коли з'являються нові рекомендації. Якщо команда в матчі, що йде, вже забила 2 — ставка зайшла, серія одразу починається знову. Суми для незіграних матчів — якщо всі попередні в серії програють; після виграшу додаток перерахує їх з ${stake} грн. Серія може тривати кілька днів. Кожен варіант — окремий депозит ${money(bank)}; з одним депозитом грай один варіант.</p>
       </section>`;
   }
 
