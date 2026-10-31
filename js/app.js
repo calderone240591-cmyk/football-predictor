@@ -185,8 +185,6 @@
     return pred;
   }
 
-  const confClass = c => ['', 'lo', 'mid', 'hi'][c.level];
-
   function setHeader(title, back) {
     $title.textContent = title;
     $back.hidden = !back;
@@ -302,10 +300,15 @@
       return;
     }
 
-    // Один список за часом початку; турнір видно на кожній картці. Цінні ставки дня — вгорі.
+    // Лише цінні ставки дня (за часом) і двійники з них; поки моделі вантажаться — індикатор.
     items.sort((a, b) => a.ev.ts - b.ev.ts);
-    $list.innerHTML = summary(items) + valueCard(items) + doublesCard(items)
-      + `<div class="group">${items.map(x => matchCard(x, true)).join('')}</div>`;
+    const loading = items.some(x => x.pred === undefined);
+    const values = valueCard(items);
+    $list.innerHTML = summary(items) + (values || (loading
+      ? `<div class="loading">Пошук цінних ставок… (проаналізовано ${items.filter(x => x.pred !== undefined).length} з ${items.length} матчів)</div>`
+      : `<div class="empty">На цей день цінних ставок ${state.league === 'all' ? '' : 'в цьому турнірі '}немає.<br>Цінна ставка — коли кф DraftKings вищий, ніж має бути за прогнозом. Спробуйте інший день.</div>`))
+      + (values && loading ? '<p class="hint pad">Аналіз інших матчів триває — список може поповнитись.</p>' : '')
+      + doublesCard(items);
   }
 
   // Перевірка моделі на вже зіграних сьогодні матчах.
@@ -326,11 +329,13 @@
     return pred ? { frozen: false, tip: pred.tip, prob: pred.prob, value: pred.value } : pred;
   }
 
+  // Цінні ставки дня, що вже розраховані (зафіксовані до старту, як у статистиці).
   function summary(items) {
-    const done = items.filter(x => isFinished(x.ev)).map(x => shownPrediction(x.ev, x.pred) && { ...x, sp: shownPrediction(x.ev, x.pred) }).filter(Boolean);
+    const done = items.filter(x => isFinished(x.ev)).map(x => ({ x, v: shownPrediction(x.ev, x.pred)?.value }))
+      .filter(d => d.v).map(d => model.settle(d.v.key, d.x.ev.home.score, d.x.ev.away.score, state.facts.get(d.x.ev.id)))
+      .filter(r => r === true || r === false);
     if (!done.length) return '';
-    const hits = done.filter(x => model.settle(x.sp.tip.key, x.ev.home.score, x.ev.away.score) === true).length;
-    return `<div class="summary">Влучність основних прогнозів у завершених матчах: <b>${hits} з ${done.length}</b></div>`;
+    return `<div class="summary">Цінні ставки в завершених матчах: зіграло <b>${done.filter(Boolean).length} з ${done.length}</b></div>`;
   }
 
   // Усі цінні ставки ігрового дня повністю, за часом: майбутні — з часом початку, ті, що йдуть, — LIVE,
@@ -473,48 +478,6 @@
       </section>`;
   }
 
-  function matchCard({ slug, ev, pred }, showLeague) {
-    const showScore = ev.state !== 'pre';
-    const sp = shownPrediction(ev, pred);
-    let predHtml;
-    if (sp === undefined) predHtml = '<div class="pred-loading">аналіз…</div>';
-    else if (!sp || !sp.prob) predHtml = '<div class="pred-loading">недостатньо даних</div>';
-    else {
-      const p = sp.prob;
-      const mark = key => {
-        const r = isFinished(ev) ? model.settle(key, ev.home.score, ev.away.score, state.facts.get(ev.id)) : undefined;
-        return r === true ? '<i class="ok">✓</i> ' : r === false ? '<i class="bad">✗</i> ' : r === null ? '↺ ' : '';
-      };
-      const tipK = sp.tip.odds || 1 / sp.tip.p;
-      const v = sp.value;
-      predHtml = `
-        <div class="bar" aria-label="Ймовірності: П1 ${pct(p['1'])}, нічия ${pct(p.X)}, П2 ${pct(p['2'])}">
-          <span class="b1" style="flex:${p['1']}">${pct(p['1'])}</span>
-          <span class="bx" style="flex:${p.X}">${pct(p.X)}</span>
-          <span class="b2" style="flex:${p['2']}">${pct(p['2'])}</span>
-        </div>
-        <div class="tip ${confClass(sp.tip.conf)}"><small>Основна</small> ${mark(sp.tip.key)}${esc(sp.tip.short)} · ${pct(sp.tip.p)} · кф ${tipK.toFixed(2)}</div>
-        ${v ? `<div class="tip val"><small>Цінна</small> ${mark(v.key)}${esc(v.short)} · ${pct(v.p)} · кф ${v.odds.toFixed(2)}</div>` : ''}`;
-    }
-    const l = LEAGUE_BY_SLUG.get(slug);
-    const badges = isFinished(ev) ? '' : [
-      (state.lineups.get(ev.id) || []).length ? '<span class="badge ok-b">склади</span>' : '',
-      sp && sp.value ? '<span class="badge val-b">цінність</span>' : '',
-    ].join('');
-    return `
-      <a class="match" href="#/match/${slug}/${ev.id}">
-        <div class="m-meta">
-          <span class="${isLive(ev) ? 'live' : ''}">${esc(statusText(ev))}${badges}</span>
-          ${showLeague ? `<span class="m-league"><img src="${FP.leagueLogo(l)}" alt="">${esc(l.short)}</span>` : ''}
-        </div>
-        <div class="m-teams">
-          <div class="team"><img src="${esc(ev.home.logo)}" alt="" loading="lazy"><span>${esc(ev.home.name)}</span><b>${showScore ? ev.home.score ?? '' : ''}</b></div>
-          <div class="team"><img src="${esc(ev.away.logo)}" alt="" loading="lazy"><span>${esc(ev.away.name)}</span><b>${showScore ? ev.away.score ?? '' : ''}</b></div>
-        </div>
-        <div class="m-pred">${predHtml}</div>
-      </a>`;
-  }
-
   // ---------- Матч ----------
   let matchSignature = '';
 
@@ -576,19 +539,21 @@
         <div class="bar-legend"><span>П1 · кф ${fair(p['1'])}</span><span>Х · ${fair(p.X)}</span><span>П2 · ${fair(p['2'])}</span></div>
       </section>
 
-      ${started ? startedCard(ev, pred) : `
-      <section class="card tipcard ${confClass(pred.tip.conf)}">
-        <div class="tip-label">Рекомендована ставка ${help('tip')}</div>
-        <div class="tip-main">${esc(pred.tip.long)}</div>
+      ${started ? startedCard(ev, pred) : pred.value ? `
+      <section class="card tipcard hi">
+        <div class="tip-label">Цінна ставка ${help('value')}</div>
+        <div class="tip-main">${esc(pred.value.long)}</div>
         <div class="tip-stats">
-          <span>Ймовірність <b>${pct(pred.tip.p)}</b></span>
-          <span>Справедливий кф <b>${fair(pred.tip.p)}</b> ${help('fair')}</span>
-          ${pred.tip.odds ? `<span>Кф букмекера <b>${pred.tip.odds.toFixed(2)}</b></span>` : ''}
-          <span>Впевненість <b>${pred.tip.conf.label}</b> ${help('conf')}</span>
+          <span>Ймовірність <b>${pct(pred.value.p)}</b></span>
+          <span>Кф DraftKings <b>${pred.value.odds.toFixed(2)}</b></span>
+          <span>Справедливий кф <b>${fair(pred.value.p)}</b> ${help('fair')}</span>
+          <span>Перевага <b>+${(pred.value.edge * 100).toFixed(1)}%</b></span>
         </div>
-        ${pred.alternatives.length ? `<div class="alts">Також варто розглянути: ${pred.alternatives.map(x => `<span>${esc(x.short)} ${pct(x.p)}</span>`).join('')}</div>` : ''}
-        ${pred.value ? `<div class="value-pick">Цінна ставка ${help('value')}: <b>${esc(pred.value.long)}</b> за кф ${pred.value.odds.toFixed(2)}, перевага +${(pred.value.edge * 100).toFixed(1)}%</div>` : ''}
         <a class="gloss-link" href="#/info/markets">Що означають ТБ, ТМ, Ф1 та інші позначення →</a>
+      </section>` : `
+      <section class="card notice-card">
+        <div class="tip-label">Цінна ставка ${help('value')}</div>
+        <p>На цей матч цінної ставки немає: кф DraftKings не дають переваги над прогнозом${ev.odds ? '' : ' — букмекер ще не виставив кф'}.</p>
       </section>`}
 
       <section class="card">
@@ -605,21 +570,27 @@
   // Після матчу показуємо, чи зіграла рекомендація.
   function startedCard(ev, pred) {
     const sp = shownPrediction(ev, pred);
-    const tip = sp.tip;
+    const v = sp && sp.frozen ? sp.value : null;
+    if (!v) {
+      return `
+        <section class="card notice-card">
+          <div class="tip-label">${isFinished(ev) ? 'Матч завершено' : 'Матч іде'}</div>
+          <p>${sp && sp.frozen ? 'Цінної ставки на цей матч до старту не було.' : 'Цей матч почався до старту обліку, тож у статистику не входить.'}</p>
+        </section>`;
+    }
     if (isFinished(ev)) {
-      const r = model.settle(tip.key, ev.home.score, ev.away.score, state.facts.get(ev.id));
+      const r = model.settle(v.key, ev.home.score, ev.away.score, state.facts.get(ev.id));
       return `
         <section class="card tipcard ${r ? 'hi' : 'lo'}">
-          <div class="tip-label">Рекомендація до матчу</div>
-          <div class="tip-main">${esc(tip.long || tip.short)} ${r === true ? '<i class="ok">✓ зіграла</i>' : r === false ? '<i class="bad">✗ не зіграла</i>' : r === null ? '↺' : '<small>результат — у «Статистиці»</small>'}</div>
-          <p class="hint">Ймовірність до матчу ${pct(tip.p)}. ${sp.frozen ? 'Результат враховано у вкладці «Статистика».' : 'Цей матч почався до старту обліку, тож у статистику не входить.'}</p>
+          <div class="tip-label">Цінна ставка до матчу</div>
+          <div class="tip-main">${esc(v.short)} @ ${v.odds.toFixed(2)} ${r === true ? '<i class="ok">✓ зіграла</i>' : r === false ? '<i class="bad">✗ не зіграла</i>' : r === null ? '↺' : '<small>результат — у «Статистиці»</small>'}</div>
+          <p class="hint">Ймовірність до матчу ${pct(v.p)}. Результат враховано у вкладці «Статистика».</p>
         </section>`;
     }
     return `
       <section class="card notice-card">
         <div class="tip-label">Матч іде</div>
-        ${sp.frozen ? `<p>Рекомендація, зафіксована до старту: <b>${esc(tip.short)}</b> (${pct(tip.p)}).</p>` : ''}
-        <p>Передматчеві рекомендації вже неактуальні: вони були зафіксовані до початку матчу і враховуються у статистиці.</p>
+        <p>Цінна ставка, зафіксована до старту: <b>${esc(v.short)}</b> @ ${v.odds.toFixed(2)} (${pct(v.p)}). Вона враховується у статистиці.</p>
       </section>`;
   }
 
@@ -779,8 +750,7 @@
   };
 
   // ---------- Статистика прогнозів ----------
-  // Основна рекомендація, цінна ставка і найкращі варіанти за ринками кожного матчу
-  // (останній прогноз перед стартом).
+  // Цінні ставки (останній прогноз перед стартом).
   state.histTab = 'bank';
   state.histPeriod = 30;
 
@@ -858,27 +828,24 @@
       <div class="controls">
         <div class="segmented small">
           <button class="${tab === 'bank' ? 'on' : ''}" data-htab="bank">Рахунок</button>
-          <button class="${tab === 'singles' ? 'on' : ''}" data-htab="singles">Основні</button>
-          <button class="${tab === 'value' ? 'on' : ''}" data-htab="value">Цінні</button>
+          <button class="${tab === 'value' ? 'on' : ''}" data-htab="value">Цінні ставки</button>
         </div>
         <div class="chips">${periods.map(([d, l]) => `<button class="chip ${state.histPeriod === d ? 'on' : ''}" data-hper="${d}">${l}</button>`).join('')}</div>
       </div>`;
     const foot = `
       <div class="btn-row pad">
         <button class="btn" data-pdf="1">Звіт PDF</button>
-        <button class="btn ghost" data-export="${tab}">Таблиця CSV</button>
+        <button class="btn ghost" data-export="${tab === 'value' ? 'value' : 'bank'}">Таблиця CSV</button>
       </div>
       <p class="hint pad">Прогнози записує сервер кожні 15 хвилин до початку кожного матчу, тож статистика однакова на телефоні й у браузері і не залежить від того, чи був відкритий додаток. CSV відкривається в Excel, Google Таблицях чи Numbers. Об'єктивні висновки можна робити після кількох сотень ставок: на десятках результат сильно залежить від везіння.</p>`;
-    const body = ({ bank: bankHtml, singles: singlesHtml, value: valueHtml }[tab] || bankHtml)();
+    const body = ({ bank: bankHtml, value: valueHtml }[tab] || bankHtml)();
     $view.innerHTML = head + body + foot;
   }
 
   // ---------- Віртуальний рахунок ----------
-  // Симуляція: на кожну основну ставку і цінну ставку — 50 грн.
-  // Коефіцієнт — букмекерський (DraftKings), якщо був, інакше справедливий (1 / ймовірність).
-  // На «найкращі ставки за ринками» не ставимо.
+  // Симуляція: на кожну цінну ставку — 50 грн за кф DraftKings.
   const STAKE = 50;
-  const BANK_CATS = { tip: 'Основні', value: 'Цінні' };
+  const BANK_CATS = { value: 'Цінні' };
   const bankStart = () => { try { return Number(localStorage.getItem('fp_bank_start')) || 5000; } catch { return 5000; } };
   const uah = v => `${v >= 0 ? '+' : '−'}${Math.abs(Math.round(v)).toLocaleString('uk-UA')} грн`;
   const money = v => `${Math.round(v).toLocaleString('uk-UA')} грн`;
@@ -886,9 +853,9 @@
   function bankBets() {
     const bets = [];
     for (const r of singlesData()) {
-      const base = { ts: r.ts, slug: r.slug, id: r.id, title: `${r.home} — ${r.away}`, score: r.tipSt.score };
-      bets.push({ ...base, cat: 'tip', pick: r.tip.short, odds: r.tip.odds || 1 / r.tip.p, book: !!r.tip.odds, s: r.tipSt.s });
-      if (r.value) bets.push({ ...base, cat: 'value', pick: r.value.short, odds: r.value.odds, book: true, s: r.valSt.s });
+      if (!r.value) continue;
+      bets.push({ ts: r.ts, slug: r.slug, id: r.id, title: `${r.home} — ${r.away}`, score: r.valSt.score,
+        cat: 'value', pick: r.value.short, odds: r.value.odds, book: true, s: r.valSt.s });
     }
     return bets.map(b => ({ ...b, profit: b.s === 'win' ? STAKE * (b.odds - 1) : b.s === 'loss' ? -STAKE : 0 }));
   }
@@ -922,14 +889,6 @@
     const staked = settled.length * STAKE;
     const wins = settled.filter(b => b.s === 'win').length, losses = settled.filter(b => b.s === 'loss').length;
 
-    const byCat = Object.entries(BANK_CATS).map(([cat, label]) => {
-      const list = settled.filter(b => b.cat === cat);
-      const pr = list.reduce((s, b) => s + b.profit, 0);
-      const w = list.filter(b => b.s === 'win').length;
-      return `<tr><td>${label}</td><td>${list.length ? `${w} з ${list.length}` : '—'}</td><td>${money(list.length * STAKE)}</td>
-        <td class="${pr >= 0 ? 'ok' : 'bad'}">${list.length ? uah(pr) : '—'}</td><td>${list.length ? (pr / (list.length * STAKE) * 100).toFixed(0) + '%' : '—'}</td></tr>`;
-    }).join('');
-
     const recent = settled.slice().reverse().slice(0, 50).map(b => `
       <a class="hrow" href="#/match/${b.slug}/${b.id}">
         <div class="hrow-main">
@@ -953,11 +912,7 @@
           <div><b>${wins} / ${losses}</b><span>виграно / програно<br>в грі ${pending.length} (${money(pending.length * STAKE)})</span></div>
         </div>
         ${balanceChart(start, settled)}
-        <p class="hint">Симуляція: на кожну основну і кожну цінну ставку ставиться 50 грн. Коефіцієнт — DraftKings, якщо був, інакше справедливий (у букмекера реальний кф на 5–8% нижчий, тож реальний результат був би трохи гіршим). На «найкращі ставки за ринками» не ставимо.</p>
-      </section>
-      <section class="card">
-        <h3>За типами ставок</h3>
-        <table class="markets"><thead><tr><th></th><th>Зіграло</th><th>Поставлено</th><th>Прибуток</th><th>ROI</th></tr></thead><tbody>${byCat}</tbody></table>
+        <p class="hint">Симуляція: на кожну цінну ставку ставиться 50 грн за кф DraftKings на момент останнього прогнозу перед стартом. У вашого букмекера кф може відрізнятися.</p>
       </section>
       ${(() => {
         const single = settled.filter(b => DONE(b.s));
@@ -1086,7 +1041,7 @@
           <div><b>${avgOdds != null ? avgOdds.toFixed(2) : '—'}</b><span>середній<br>кф</span></div>
           <div><b>${avgEdge != null ? '+' + (avgEdge * 100).toFixed(1) + '%' : '—'}</b><span>середня<br>перевага</span></div>
         </div>
-        <p class="hint">Цінна ставка — ринок, де наша ймовірність вища, ніж закладено в кф DraftKings: перевага від 3% при ймовірності від 30%. Прибуток — при ставці 1 од. на кожну за кф DraftKings. Цінні ставки виграють рідше за основні (кф вищі), тож оцінювати їх можна лише за прибутком на сотнях ставок.</p>
+        <p class="hint">Цінна ставка — ринок, де наша ймовірність вища, ніж закладено в кф DraftKings: перевага від 3% при ймовірності від 30%. Прибуток — при ставці 1 од. на кожну за кф DraftKings. Цінні ставки мають вищі кф і програють часто, тож оцінювати їх можна лише за прибутком на сотнях ставок.</p>
       </section>
       ${done.length ? `
       <section class="card"><h3>За розміром переваги</h3>${byEdge}
@@ -1129,75 +1084,6 @@
     return [...m].sort((a, b) => b[1].length - a[1].length);
   };
 
-  function singlesHtml() {
-    const rows = singlesData();
-    const tips = rows.filter(r => DONE(r.tipSt.s));
-    const tipWins = tips.filter(r => r.tipSt.s === 'win').length;
-    const tipExp = tips.length ? tips.reduce((s, r) => s + r.tip.p, 0) / tips.length : null;
-    const vals = rows.filter(r => r.value && DONE(r.valSt.s));
-    const valWins = vals.filter(r => r.valSt.s === 'win').length;
-    const valProfit = vals.reduce((s, r) => s + (r.valSt.s === 'win' ? r.value.odds - 1 : -1), 0);
-    const pending = rows.filter(r => !DONE(r.tipSt.s) && r.tipSt.s !== 'void').length;
-
-    const byLevel = [3, 2, 1].map(l => {
-      const list = tips.filter(r => r.tip.level === l);
-      return rateRow(`${['', 'Низька', 'Середня', 'Висока'][l]} впевненість`, list.filter(r => r.tipSt.s === 'win').length, list.length,
-        list.length ? list.reduce((s, r) => s + r.tip.p, 0) / list.length : null);
-    }).join('');
-
-    const leagues = new Map();
-    for (const r of tips) {
-      if (!leagues.has(r.slug)) leagues.set(r.slug, { w: 0, n: 0 });
-      const x = leagues.get(r.slug);
-      x.n++; if (r.tipSt.s === 'win') x.w++;
-    }
-    const byLeague = [...leagues].sort((a, b) => b[1].n - a[1].n).map(([slug, x]) => `
-      <tr><td>${esc(leagueLabel(slug))}</td><td>${x.w} з ${x.n}</td><td><b>${pctOf(x.w, x.n)}</b></td></tr>`).join('');
-
-    // Список за днями.
-    const byDay = new Map();
-    for (const r of rows.filter(r => r.tipSt.s !== 'pending')) {
-      const d = dateOf(r.ts);
-      if (!byDay.has(d)) byDay.set(d, []);
-      byDay.get(d).push(r);
-    }
-    const days = [...byDay].map(([d, list]) => {
-      const done = list.filter(r => DONE(r.tipSt.s));
-      const w = done.filter(r => r.tipSt.s === 'win').length;
-      return `
-        <div class="day-head"><b>${esc(d)}</b><span>${done.length ? `${w} з ${done.length}` : ''}</span></div>
-        ${list.map(r => `
-          <a class="hrow" href="#/match/${r.slug}/${r.id}">
-            <div class="hrow-main">
-              <small>${esc(leagueLabel(r.slug))}</small>
-              <span>${esc(r.home)} — ${esc(r.away)} ${r.tipSt.score ? `<b>${esc(r.tipSt.score)}</b>` : ''}</span>
-              <em>${esc(r.tip.short)} · ${pct(r.tip.p)}${r.value ? ` &nbsp;|&nbsp; цінна: ${esc(r.value.short)} @ ${r.value.odds.toFixed(2)} ${r.valSt && r.valSt.s !== 'pending' ? STATUS_ICON[r.valSt.s] || '' : ''}` : ''}</em>
-            </div>
-            <div class="hrow-st">${r.tipSt.s === 'live' ? '<span class="live">LIVE</span>' : STATUS_ICON[r.tipSt.s] || ''}</div>
-          </a>`).join('')}`;
-    }).join('');
-
-    return `
-      <section class="card">
-        <div class="kpis">
-          <div><b>${pctOf(tipWins, tips.length)}</b><span>основні ставки<br>${tipWins} з ${tips.length}</span></div>
-          <div><b class="${valProfit >= 0 ? 'ok' : 'bad'}">${vals.length ? units(valProfit) : '—'}</b><span>цінні ставки, од.<br>${vals.length ? `${valWins} з ${vals.length} · ROI ${(valProfit / vals.length * 100).toFixed(0)}%` : 'ще немає'}</span></div>
-          <div><b>${pending}</b><span>очікують<br>результату</span></div>
-        </div>
-      </section>
-      ${tips.length ? `<section class="card">
-        <h3>Основні ставки</h3>
-        ${rateRow('Усі', tipWins, tips.length, tipExp)}
-        ${byLevel}
-        <p class="hint">Зелена смуга — скільки зіграло, риска — скільки мало зіграти за прогнозом. Якщо смуга стабільно досягає риски, ймовірності додатка чесні.</p>
-      </section>` : ''}
-      ${byLeague ? `<section class="card">
-        <h3>За турнірами</h3>
-        <table class="markets"><tbody>${byLeague}</tbody></table>
-      </section>` : ''}
-      ${days ? `<section class="card"><h3>По днях</h3>${days}</section>` : '<div class="empty">За цей період ще немає зіграних матчів.</div>'}`;
-  }
-
   // ---------- Звіт у PDF ----------
   // Звіт верстається як звичайна HTML-сторінка А4 і перетворюється на PDF бібліотекою html2pdf
   // (вантажиться лише під час експорту). Кирилиця зберігається, бо сторінка рендериться як зображення.
@@ -1231,22 +1117,13 @@
     const table = (head, body) => `<table><thead><tr>${head.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
     const H = ['', 'Розраховано', 'Зіграло', '%', 'Очікувалось', 'Прибуток, од.'];
 
-    const singles = singlesData();
-    const tips = singles.map(r => ({ ...r.tip, st: r.tipSt }));
-    const values = singles.filter(r => r.value).map(r => ({ ...r.value, st: r.valSt }));
+    const singles = singlesData().filter(r => r.value);
+    const values = singles.map(r => ({ ...r.value, st: r.valSt, slug: r.slug }));
 
-    const summary = [
-      row('Основні ставки', agg(tips, x => x.odds || 1 / x.p)),
-      row('Цінні ставки (кф DraftKings)', agg(values, x => x.odds)),
-    ].join('');
-
-    const byLevel = [3, 2, 1].map(l => row(`${['', 'Низька', 'Середня', 'Висока'][l]} впевненість`,
-      agg(tips.filter(t => t.level === l), x => x.odds || 1 / x.p))).join('');
-
-    const journal = singles.filter(r => DONE(r.tipSt.s)).slice(0, 200).map(r => `
+    const journal = singles.filter(r => DONE(r.valSt.s)).slice(0, 200).map(r => `
       <tr><td>${esc(FP.dateOfTs(r.ts).split('-').reverse().join('.'))}</td><td>${esc(leagueLabel(r.slug))}</td>
-        <td>${esc(r.home)} — ${esc(r.away)}</td><td>${esc(r.tipSt.score || '')}</td>
-        <td>${esc(r.tip.short)}</td><td>${pct(r.tip.p)}</td><td class="${r.tipSt.s === 'win' ? 'pos' : 'neg'}">${RES[r.tipSt.s]}</td></tr>`).join('');
+        <td>${esc(r.home)} — ${esc(r.away)}</td><td>${esc(r.valSt.score || '')}</td>
+        <td>${esc(r.value.short)} @ ${r.value.odds.toFixed(2)}</td><td>${pct(r.value.p)}</td><td class="${r.valSt.s === 'win' ? 'pos' : 'neg'}">${RES[r.valSt.s]}</td></tr>`).join('');
 
     const period = state.histPeriod ? `останні ${state.histPeriod} днів` : 'увесь час';
     return `
@@ -1261,13 +1138,13 @@
           .pdf .pos { color: #17834f; font-weight: 700; } .pdf .neg { color: #b4483a; font-weight: 700; }
           .pdf .note { color: #5e6862; font-size: 10.5px; margin-top: 14px; }
         </style>
-        <h1>Футбол Аналітика — статистика прогнозів</h1>
+        <h1>Футбол Аналітика — статистика цінних ставок</h1>
         <div class="meta">Період: ${esc(period)} · сформовано ${esc(new Date().toLocaleString('uk-UA'))}</div>
         <div class="band"></div>
         ${(() => {
           const bets = bankBets().filter(b => DONE(b.s) || b.s === 'void');
           const pr = bets.reduce((s, b) => s + b.profit, 0);
-          const rows = [['Усі ставки', bets], ...Object.entries(BANK_CATS).map(([c, l]) => [l, bets.filter(b => b.cat === c)])]
+          const rows = [['Цінні ставки', bets]]
             .map(([l, list]) => {
               const p = list.reduce((s, b) => s + b.profit, 0);
               return `<tr><td>${esc(l)}</td><td>${list.length}</td><td>${list.filter(b => b.s === 'win').length}</td><td>${money(list.length * STAKE)}</td>
@@ -1277,21 +1154,14 @@
             <p class="meta">Стартовий банк ${money(bankStart())} → баланс <b>${money(bankStart() + pr)}</b></p>
             ${table(['', 'Ставок', 'Виграно', 'Поставлено', 'Прибуток', 'ROI'], rows)}`;
         })()}
-        <h2>Підсумок</h2>
-        ${table(['Тип рекомендацій', ...H.slice(1)], summary)}
-        <h2>Основні ставки за рівнем впевненості</h2>
-        ${table(H, byLevel)}
-        <h2>Основні та цінні ставки за чемпіонатами</h2>
-        ${table(H, groupBy([
-          ...singles.map(r => ({ ...r.tip, st: r.tipSt, slug: r.slug, k: r.tip.odds || 1 / r.tip.p })),
-          ...singles.filter(r => r.value).map(r => ({ ...r.value, st: r.valSt, slug: r.slug, k: r.value.odds })),
-        ], x => leagueLabel(x.slug)).map(([l, xs]) => row(l, agg(xs, x => x.k))).join(''))}
-        <h2>Цінні ставки (за кф DraftKings)</h2>
+        <h2>Цінні ставки за розміром переваги (кф DraftKings)</h2>
         ${table(H, [[0.03, 0.06, 'Перевага 3–6%'], [0.06, 0.10, 'Перевага 6–10%'], [0.10, 9, 'Перевага від 10%']]
           .map(([lo, hi, l]) => row(l, agg(values.filter(v => v.p * v.odds - 1 >= lo && v.p * v.odds - 1 < hi), x => x.odds))).join('')
           + row('Усі цінні ставки', agg(values, x => x.odds)))}
-        ${journal ? `<h2>Журнал основних ставок</h2>${table(['Дата', 'Турнір', 'Матч', 'Рахунок', 'Ставка', 'Ймов.', ''], journal)}` : ''}
-        <p class="note">«Очікувалось» — середня ймовірність за прогнозом додатка. Прибуток — при ставці 1 од. на кожну рекомендацію: для основних і цінних ставок за кф DraftKings, якщо він був, інакше за справедливим кф; у вашого букмекера кф зазвичай на 5–8% нижчий. Прогнози ймовірнісні та не гарантують виграшу. 18+.</p>
+        <h2>Цінні ставки за чемпіонатами</h2>
+        ${table(H, groupBy(values, x => leagueLabel(x.slug)).map(([l, xs]) => row(l, agg(xs, x => x.odds))).join(''))}
+        ${journal ? `<h2>Журнал цінних ставок</h2>${table(['Дата', 'Турнір', 'Матч', 'Рахунок', 'Ставка', 'Ймов.', ''], journal)}` : ''}
+        <p class="note">«Очікувалось» — середня ймовірність за прогнозом додатка. Прибуток — при ставці 1 од. на кожну цінну ставку за кф DraftKings; у вашого букмекера кф може відрізнятися. Прогнози ймовірнісні та не гарантують виграшу. 18+.</p>
       </div>`;
   }
 
@@ -1328,14 +1198,7 @@
     const cell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const RES = { win: 'зіграла', loss: 'не зіграла', void: 'повернення', pending: 'очікує', live: 'йде', unknown: 'невідомо' };
     let rows;
-    if (tab === 'singles') {
-      rows = [['Дата', 'Час', 'Турнір', 'Господарі', 'Гості', 'Рахунок', 'Прогноз', 'Ймовірність', 'Впевненість', 'Результат', 'Цінна ставка', 'Кф цінної', 'Результат цінної']];
-      for (const r of singlesData()) {
-        rows.push([FP.dateOfTs(r.ts), timeOf(r.ts), leagueLabel(r.slug), r.home, r.away, r.tipSt.score || '', r.tip.short,
-          num(r.tip.p), ['', 'низька', 'середня', 'висока'][r.tip.level], RES[r.tipSt.s],
-          r.value ? r.value.short : '', r.value ? num(r.value.odds) : '', r.valSt ? RES[r.valSt.s] : '']);
-      }
-    } else if (tab === 'bank') {
+    if (tab === 'bank') {
       rows = [['Дата', 'Тип', 'Подія', 'Рахунок', 'Ставка', 'Кф', 'Джерело кф', 'Сума, грн', 'Результат', 'Прибуток, грн']];
       for (const b of bankBets().sort((x, y) => x.ts - y.ts)) {
         rows.push([FP.dateOfTs(b.ts), BANK_CATS[b.cat], b.title, b.score || '', b.pick, num(b.odds), b.book ? 'DraftKings' : 'справедливий',
@@ -1354,7 +1217,7 @@
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `statystyka-${{ bank: 'rakhunok', singles: 'osnovni', value: 'cinni' }[tab]}-${FP.localDate(0)}.csv`;
+    a.download = `statystyka-${{ bank: 'rakhunok', value: 'cinni' }[tab]}-${FP.localDate(0)}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();

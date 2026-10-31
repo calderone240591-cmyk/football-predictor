@@ -357,6 +357,101 @@
       </div>`;
   }
 
+  // ---------- Серії виграшів і програшів ----------
+  // Ставки в порядку початку матчів. Повернення (ІТБ 1, рівно 1 гол) серію не перериває і не подовжує.
+  function runsOf(list) {
+    const runs = [];
+    for (const b of list) {
+      if (b.s !== 'win' && b.s !== 'loss') continue;
+      const last = runs[runs.length - 1];
+      if (last && last.s === b.s) { last.bets.push(b); last.profit += b.profit; }
+      else runs.push({ s: b.s, bets: [b], profit: b.profit });
+    }
+    return runs;
+  }
+  const runSpan = r => {
+    const a = r.bets[0].r.ev.ts, z = r.bets[r.bets.length - 1].r.ev.ts;
+    return dayStart(a) === dayStart(z) ? dateOf(a) : `${dateOf(a)}–${dateOf(z)}`;
+  };
+  const RES = { win: 'виграш', loss: 'програш', void: 'повернення' };
+  const betTitle = b => `${dateOf(b.r.ev.ts)} ${timeOf(b.r.ev.ts)} · ${b.r.team.short || b.r.team.name} ${b.r.side === 'home' ? 'vs' : '@'} ${b.r.opp.short || b.r.opp.name} · забила ${b.r.g} · ${RES[b.s]}`;
+
+  // Динаміка: після кожної ставки — довжина поточної серії (вгору — виграші поспіль, вниз — програші).
+  function streakChart(list) {
+    if (list.length < 2) return '';
+    let cur = 0;
+    const pts = list.map(b => {
+      if (b.s === 'win') cur = cur > 0 ? cur + 1 : 1;
+      else if (b.s === 'loss') cur = cur < 0 ? cur - 1 : -1;
+      return { b, v: b.s === 'void' ? 0 : cur };
+    });
+    const up = Math.max(1, ...pts.map(p => p.v)), down = Math.max(1, ...pts.map(p => -p.v));
+    const W = 300, H = 110, base = H * up / (up + down), unit = H / (up + down);
+    const bw = W / pts.length, gap = bw > 4 ? bw * 0.2 : 0;
+    const bars = pts.map((p, i) => {
+      const h = p.v ? Math.abs(p.v) * unit : 2;
+      const y = p.v > 0 ? base - h : p.v < 0 ? base : base - 1;
+      return `<rect x="${(i * bw + gap / 2).toFixed(2)}" y="${y.toFixed(2)}" width="${(bw - gap).toFixed(2)}" height="${h.toFixed(2)}" class="${p.b.s}" data-tip="${esc(betTitle(p.b))}${p.v ? ` · серія ${Math.abs(p.v)}` : ''}"><title>${esc(betTitle(p.b))}${p.v ? ` · серія ${Math.abs(p.v)}` : ''}</title></rect>`;
+    }).join('');
+    return `
+      <div class="chart">
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="dr-bars" aria-label="Динаміка серій">
+          ${bars}<line x1="0" x2="${W}" y1="${base.toFixed(1)}" y2="${base.toFixed(1)}" class="chart-base"/>
+        </svg>
+        <div class="chart-axis"><span>✓ ${up}</span><span>✗ ${down}</span></div>
+      </div>
+      <div class="dr-xaxis"><span>${dateOf(list[0].r.ev.ts)}</span><span>${dateOf(list[list.length - 1].r.ev.ts)}</span></div>`;
+  }
+
+  // Стрічка всіх ставок по днях: ✓ виграш, ✗ програш, ↺ повернення.
+  function streakStrip(list) {
+    const days = new Map();
+    for (const b of list) { const k = dateOf(b.r.ev.ts); if (!days.has(k)) days.set(k, []); days.get(k).push(b); }
+    return `<div class="dr-strip">${[...days].map(([d, l]) => `<div><small>${d}</small><span>${l.map(b =>
+      `<i class="${b.s}" title="${esc(betTitle(b))}" data-tip="${esc(betTitle(b))}">${{ win: '✓', loss: '✗', void: '↺' }[b.s]}</i>`).join('')}</span></div>`).join('')}</div>`;
+  }
+
+  function streaksCard(label, list) {
+    const runs = runsOf(list);
+    if (!runs.length) return '';
+    const wins = runs.filter(r => r.s === 'win'), losses = runs.filter(r => r.s === 'loss');
+    const longest = rs => rs.reduce((m, r) => (!m || r.bets.length >= m.bets.length ? r : m), null);
+    const avg = rs => (rs.length ? (rs.reduce((s, r) => s + r.bets.length, 0) / rs.length).toFixed(1) : '—');
+    const bw = longest(wins), bl = longest(losses), cur = runs[runs.length - 1];
+    const tile = (r, cls, empty) => (r ? `<b class="${cls}">${r.bets.length}</b><span>${runSpan(r)}<br>${uah(r.profit)}</span>` : `<b>—</b><span>${empty}</span>`);
+    const maxLen = Math.max(...runs.map(r => r.bets.length));
+    const dist = [];
+    for (let k = 1; k <= maxLen; k++) {
+      const w = wins.filter(r => r.bets.length === k).length, l = losses.filter(r => r.bets.length === k).length;
+      if (w || l) dist.push(`<tr><td>${k} поспіль</td><td class="${w ? 'ok' : ''}">${w || '—'}</td><td class="${l ? 'bad' : ''}">${l || '—'}</td></tr>`);
+    }
+    const teams = r => r.bets.map(b => esc(b.r.team.short || b.r.team.name)).join(', ');
+    return `
+      <section class="card"><h3>Серії поспіль · ${label}</h3>
+        <div class="kpis">
+          <div>${tile(bw, 'ok', 'виграшів ще немає')}<span>найдовша серія<br>виграшів</span></div>
+          <div>${tile(bl, 'bad', 'програшів ще немає')}<span>найдовша серія<br>програшів</span></div>
+          <div><b class="${cur.s === 'win' ? 'ok' : 'bad'}">${cur.s === 'win' ? '✓' : '✗'} ${cur.bets.length}</b><span>зараз<br>${cur.s === 'win' ? 'виграші' : 'програші'} поспіль з ${dateOf(cur.bets[0].r.ev.ts)}</span></div>
+        </div>
+        <div class="kpis kpis2">
+          <div><b>${wins.length}</b><span>серій виграшів<br>середня ${avg(wins)}</span></div>
+          <div><b>${losses.length}</b><span>серій програшів<br>середня ${avg(losses)}</span></div>
+          <div><b>${runs.length}</b><span>змін серій<br>ставок ${list.length}</span></div>
+        </div>
+        ${streakChart(list)}
+        ${streakStrip(list)}
+        <p class="dr-tipline">Натисніть на стовпчик чи клітинку — тут з'явиться матч.</p>
+        <table class="markets dr-agg dr-dist"><thead><tr><th>Довжина</th><th>Серій виграшів</th><th>Серій програшів</th></tr></thead><tbody>${dist.join('')}</tbody></table>
+        <details class="more"><summary>Усі серії по черзі · ${runs.length}</summary>
+          <table class="markets dr-agg"><thead><tr><th>Серія</th><th>Коли · команди</th><th>Грн</th></tr></thead><tbody>${runs.slice().reverse().map(r => `
+            <tr><td><b class="${r.s === 'win' ? 'ok' : 'bad'}">${r.s === 'win' ? '✓' : '✗'} ${r.bets.length}</b></td>
+              <td>${runSpan(r)}<small>${teams(r)}</small></td>
+              <td class="${r.profit >= 0 ? 'ok' : 'bad'}">${uah(r.profit)}</td></tr>`).join('')}</tbody></table>
+        </details>
+        <p class="hint">Ставки — за часом початку матчів. Графік: стовпчик над лінією — скільки виграшів поспіль після цієї ставки, під лінією — програшів поспіль.${label === 'ІТБ 1' ? ' Повернення (рівно 1 гол) серію не перериває і не подовжує.' : ''}</p>
+      </section>`;
+  }
+
   // Рядок таблиці: ставок, виграно / повернення / програно, % влучності (без повернень), очікувалось, прибуток, ROI.
   function aggRow(label, list) {
     const w = list.filter(b => b.s === 'win').length, v = list.filter(b => b.s === 'void').length, l = list.filter(b => b.s === 'loss').length;
@@ -425,6 +520,8 @@
         <table class="markets dr-agg">${aggHead('Ставка')}<tbody>${aggRow('ІТБ 1', it1)}${aggRow('ІТБ 1.5', it15)}</tbody></table>
         <p class="hint">В/П/Пр — виграно / повернення / програно. Команда забила хоча б один гол у ${pct(recs.filter(r => r.g > 0).length / recs.length)} матчів (${recs.filter(r => r.g > 0).length} з ${recs.length}).</p>
       </section>
+      ${streaksCard('ІТБ 1', it1)}
+      ${streaksCard('ІТБ 1.5', it15)}
       <section class="card"><h3>За довжиною серії · ІТБ 1</h3>
         <table class="markets dr-agg">${aggHead('Без голів')}<tbody>${byStreakTable(it1)}</tbody></table>
       </section>
@@ -490,6 +587,12 @@
   }
 
   $view.addEventListener('click', e => {
+    const tip = e.target.closest('[data-tip]');
+    if (tip) {
+      const $line = tip.closest('.card').querySelector('.dr-tipline');
+      if ($line) $line.textContent = tip.dataset.tip;
+      return;
+    }
     const b = e.target.closest('button');
     if (!b || !state.data) return;
     if (b.dataset.period) { state.period = b.dataset.period; route(true); }
