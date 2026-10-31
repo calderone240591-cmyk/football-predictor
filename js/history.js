@@ -23,7 +23,7 @@ FP.history = (() => {
       slug, ts: ev.ts,
       home: ev.home.short || ev.home.name, away: ev.away.short || ev.away.name,
       tip: { key: pred.tip.key, short: pred.tip.short, p: r3(pred.tip.p), level: pred.tip.conf.level, odds: pred.tip.odds || null },
-      value: pred.value ? { key: pred.value.key, short: pred.value.short, p: r3(pred.value.p), odds: pred.value.odds } : null,
+      value: pred.value ? { key: pred.value.key, short: pred.value.short, p: r3(pred.value.p), odds: pred.value.odds, src: pred.value.src } : null,
       // Ймовірності 1X2 на момент старту — щоб картка матчу, що почався, не перераховувалась.
       probs: { p1: r3(pred.prob['1']), px: r3(pred.prob.X), p2: r3(pred.prob['2']) },
     };

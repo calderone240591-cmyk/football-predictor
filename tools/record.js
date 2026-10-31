@@ -30,7 +30,7 @@ global.FP = {
     isLoaded: () => true,
   },
 };
-for (const f of ['config.js', 'api.js', 'model.js', 'history.js']) {
+for (const f of ['config.js', 'api.js', 'vbet.js', 'model.js', 'history.js']) {
   vm.runInThisContext(fs.readFileSync(path.join(ROOT, 'js', f), 'utf8'), { filename: f });
 }
 const { api, model, LEAGUES, LEAGUE_BY_SLUG } = FP;
@@ -105,16 +105,22 @@ async function statsFor(slug, entry, teamId) {
   const slugs = [...new Set(uniq.map(x => x.slug))];
   for (const s of [...slugs.filter(s => !LEAGUE_BY_SLUG.get(s).cup), ...slugs.filter(s => LEAGUE_BY_SLUG.get(s).cup)]) await buildModel(s);
 
-  let written = 0;
+  // Кф VBET — пріоритет; матчі, яких немає в його лінії (або якщо VBET недоступний), — за DraftKings.
+  await FP.vbet.load(true);
+  const vb = FP.vbet.status();
+  let written = 0, viaVbet = 0;
   for (const { slug, ev } of uniq) {
     const entry = models.get(slug);
     if (!entry || entry.error) continue;
     const ctx = { home: await statsFor(slug, entry, ev.home.id), away: await statsFor(slug, entry, ev.away.id) };
-    const pred = model.predict(entry.m, ev, ctx);
+    const withOdds = FP.vbet.withOdds(slug, ev);
+    const pred = model.predict(entry.m, withOdds, ctx);
     if (!pred) continue;
+    if (withOdds.odds && withOdds.odds.src === 'vbet') viaVbet++;
     journal.entries[ev.id] = FP.history.entryOf(slug, ev, pred);
     written++;
   }
+  console.log(`VBET: ${vb.error || `${vb.games} games`}, matches with VBET odds: ${viaVbet}`);
 
   const cutoff = now - KEEP_DAYS * 86400;
   for (const id of Object.keys(journal.entries)) if (journal.entries[id].ts < cutoff) delete journal.entries[id];

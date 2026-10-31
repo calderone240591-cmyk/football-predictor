@@ -347,9 +347,10 @@ FP.model = (() => {
     return { markets: out, corners: { home: ch, away: ca }, cards: { home: yh, away: ya }, red: rh + ra };
   }
 
-  // Які ринки мають коефіцієнт букмекера.
+  // Які ринки мають коефіцієнт букмекера. VBET (js/vbet.js) дає готовий набір у book.
   function bookOdds(odds) {
     if (!odds) return {};
+    if (odds.book) return odds.book;
     const out = { '1': odds.home, 'X': odds.draw, '2': odds.away };
     if (odds.line) {
       const k = String(odds.line).replace('.', '');
@@ -400,10 +401,19 @@ FP.model = (() => {
     const book = bookOdds(ev.odds);
     const scoreMarkets = SCORE_MARKETS.map(mk => ({ ...mk, p: scoreMarketProb(g, mk) }));
     const cc = cornersCards(hs, as);
+    // Кутові й картки модель рахує лише за статистикою. Якщо букмекер дає обидві сторони лінії (VBET),
+    // ймовірність — як і для голів: 70% ринок (без маржі) + 30% модель.
     const all = scoreMarkets.concat(halfMarkets(lh, la), cc ? cc.markets : [])
       .map(x => {
+        let p = x.p;
+        const m = /^(C1|C|Y|R)([OU])([\d.]+)$/.exec(x.key);
+        const bo = m && book[`${m[1]}O${m[3]}`], bu = m && book[`${m[1]}U${m[3]}`];
+        if (bo && bu) {
+          const over = (1 / bo) / (1 / bo + 1 / bu);
+          p = MARKET_WEIGHT * (m[2] === 'O' ? over : 1 - over) + (1 - MARKET_WEIGHT) * p;
+        }
         const o = book[x.key] || null;
-        return { ...x, odds: o, edge: o ? x.p * o - 1 : null };
+        return { ...x, p, odds: o, edge: o ? p * o - 1 : null };
       });
     const markets = all.slice().sort((x, y) => y.p - x.p);
     const prob = Object.fromEntries(all.map(x => [x.key, x.p]));
@@ -424,10 +434,12 @@ FP.model = (() => {
       .filter(x => x.edge != null && x.odds >= MIN_VALUE_ODDS && x.edge >= VALUE_EDGE && x.p >= 0.30)
       .sort((x, y) => y.edge - x.edge);
 
+    // Джерело кф: vbet — VBET, dk — DraftKings (ESPN).
+    const src = ev.odds ? ev.odds.src || 'dk' : null;
     return {
       lh, la, model: { lh: mlh, la: mla, ...modelCore }, market, useXg,
-      prob, markets, tip, alternatives,
-      value: valueBets[0] || null,
+      prob, markets, tip: tip.odds ? { ...tip, src } : tip, alternatives,
+      value: valueBets[0] ? { ...valueBets[0], src } : null,
       corners: cc && cc.corners, cards: cc && cc.cards,
       lowData: minPlayed < 4, home: H, away: A,
       reasons: reasons(m, ev, H, A, mlh, mla, market, modelCore, minPlayed, useXg, hs, as, cc),

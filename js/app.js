@@ -180,7 +180,8 @@
     const entry = state.models.get(slug);
     if (!entry) return undefined;
     if (entry.error) return null;
-    const pred = model.predict(entry.m, ev, ctxFor(ev));
+    // Кф VBET, якщо матч є в його лінії, інакше DraftKings.
+    const pred = model.predict(entry.m, FP.vbet.withOdds(slug, ev), ctxFor(ev));
     if (pred && isUpcoming(ev)) FP.history.record(slug, ev, pred);
     return pred;
   }
@@ -200,6 +201,8 @@
   }
 
   const errorBox = msg => `<div class="notice error">${esc(msg)}</div>`;
+  // Позначка букмекера, за чиїм кф пораховано ставку: VBET (пріоритет) або DK (DraftKings).
+  const bookChip = src => `<span class="bk ${src === 'vbet' ? 'vbet' : 'dk'}">${FP.bookName(src)}</span>`;
 
   // ---------- Прогнози ----------
   async function viewHome() {
@@ -225,7 +228,9 @@
   async function loadHome(rid, force, silent) {
     await FP.history.ready;   // щоб для матчів, що почались, одразу показати зафіксований прогноз
     FP.history.sync(force).then(() => { if (rid === renderId) renderList(); });
+    const vbet = FP.vbet.load(force);
     const { items, errors } = await loadDay(state.dayOffset, force);
+    await vbet;
     if (rid !== renderId) return;
     if (!items.length && errors === LEAGUES.length) {
       if (!silent) document.getElementById('list').innerHTML = errorBox('Не вдалося завантажити матчі. Перевірте інтернет і натисніть ⟳.');
@@ -261,7 +266,7 @@
     if (Date.now() - recordingAt < 20 * MIN) return;
     recordingAt = Date.now();
     try {
-      const days = await Promise.all([0, 1, 2].map(o => loadDay(o, false)));
+      const [days] = await Promise.all([Promise.all([0, 1, 2].map(o => loadDay(o, false))), FP.vbet.load(false)]);
       const items = days.flatMap(d => d.items).filter(x => isUpcoming(x.ev));
       const slugs = [...new Set(items.map(x => x.slug))];
       for (const slug of [...slugs.filter(s => !LEAGUE_BY_SLUG.get(s).cup), ...slugs.filter(s => LEAGUE_BY_SLUG.get(s).cup)]) {
@@ -277,6 +282,8 @@
     if (!$s) return;
     const parts = [];
     if (state.updatedAt) parts.push(`Оновлено о ${timeOf(state.updatedAt / 1000)}, автооновлення кожні 2 хв`);
+    const vb = FP.vbet.status();
+    if (vb.loadedAt) parts.push(vb.error ? 'VBET недоступний — кф DraftKings' : 'кф VBET, де матчу немає в лінії VBET — DraftKings');
     if (state.dayErrors) parts.push(`не вдалося завантажити турнірів: ${state.dayErrors}`);
     $s.textContent = parts.join(' · ');
   }
@@ -306,7 +313,7 @@
     const values = valueCard(items);
     $list.innerHTML = summary(items) + (values || (loading
       ? `<div class="loading">Пошук цінних ставок… (проаналізовано ${items.filter(x => x.pred !== undefined).length} з ${items.length} матчів)</div>`
-      : `<div class="empty">На цей день цінних ставок ${state.league === 'all' ? '' : 'в цьому турнірі '}немає.<br>Цінна ставка — коли кф DraftKings вищий, ніж має бути за прогнозом. Спробуйте інший день.</div>`))
+      : `<div class="empty">На цей день цінних ставок ${state.league === 'all' ? '' : 'в цьому турнірі '}немає.<br>Цінна ставка — коли кф букмекера (VBET, а якщо матчу там немає — DraftKings) вищий, ніж має бути за прогнозом. Спробуйте інший день.</div>`))
       + (values && loading ? '<p class="hint pad">Аналіз інших матчів триває — список може поповнитись.</p>' : '')
       + doublesCard(items);
   }
@@ -359,15 +366,16 @@
       }
       return esc(timeOf(x.ev.ts));
     };
+    const nV = values.filter(x => x.v.src === 'vbet').length;
     return `
       <section class="card acca">
-        <div class="acca-head"><b>Цінні ставки дня · ${values.length} ${help('value')}</b><span>ймовірність вища, ніж закладено в коефіцієнт</span></div>
+        <div class="acca-head"><b>Цінні ставки дня · ${values.length} ${help('value')}</b><span>ймовірність вища, ніж закладено в коефіцієнт · кф VBET: ${nV}${values.length - nV ? `, DraftKings: ${values.length - nV}` : ''}</span></div>
         ${values.map(x => {
           const on = state.valueSel.has(x.ev.id);
           return `<div class="acca-row vrow ${on ? 'sel' : ''}">
             <a href="#/match/${x.slug}/${x.ev.id}">
               <span><small>${status(x)}</small> ${esc(x.ev.home.short || x.ev.home.name)} — ${esc(x.ev.away.short || x.ev.away.name)}</span>
-              <b>${esc(x.v.short)} @ ${x.v.odds.toFixed(2)} · ${pct(x.v.p)}<small class="v-edge"> · перевага +${(x.v.edge * 100).toFixed(0)}%</small></b>
+              <b>${esc(x.v.short)} @ ${x.v.odds.toFixed(2)} ${bookChip(x.v.src)} · ${pct(x.v.p)}<small class="v-edge"> · перевага +${(x.v.edge * 100).toFixed(0)}%</small></b>
             </a>
             ${canPick(x) ? `<button class="add ${on ? 'on' : ''}" data-vsel="${esc(x.ev.id)}" aria-label="Обрати для двійників">${on ? '✓' : '+'}</button>` : '<span class="add-stub"></span>'}
           </div>`;
@@ -382,7 +390,7 @@
 
 
   // Двійники з обраних цінних ставок: кожна з кожною — n × (n − 1) / 2 пар. Лише матчі, що ще не почались.
-  // Кф пари — добуток кф DraftKings, ймовірність — добуток ймовірностей (матчі незалежні).
+  // Кф пари — добуток кф букмекера, ймовірність — добуток ймовірностей (матчі незалежні).
   function doublesCard(items) {
     const all = items.filter(x => isUpcoming(x.ev) && x.ev.ts * 1000 > Date.now() && x.pred && x.pred.value);
     if (all.length < 2) return '';
@@ -403,14 +411,14 @@
     return scenarioCard(vs, pairs.length) + `
       <section class="card">
         <h3>Двійники з обраних · ${pairs.length}</h3>
-        <p class="hint top">Обрано ${n} цінних ставок → ${n} × ${n - 1} / 2 = <b>${pairs.length}</b> пар. Відсортовано за перевагою. Кф — добуток кф DraftKings, ймовірність — шанс, що зіграють обидві.</p>
+        <p class="hint top">Обрано ${n} цінних ставок → ${n} × ${n - 1} / 2 = <b>${pairs.length}</b> пар. Відсортовано за перевагою. Кф — добуток кф букмекера (позначка біля кожної ставки), ймовірність — шанс, що зіграють обидві.</p>
         <table class="markets doubles">
           <thead><tr><th>#</th><th>Пара</th><th>Кф</th><th>Ймов.</th><th>Перев.</th></tr></thead>
           <tbody>${pairs.map((d, i) => `
             <tr>
               <td>${i + 1}</td>
-              <td><a href="#/match/${d.a.slug}/${d.a.ev.id}">${name(d.a)}</a> <b>${esc(d.a.v.short)}</b><br>
-                  <a href="#/match/${d.b.slug}/${d.b.ev.id}">${name(d.b)}</a> <b>${esc(d.b.v.short)}</b></td>
+              <td><a href="#/match/${d.a.slug}/${d.a.ev.id}">${name(d.a)}</a> <b>${esc(d.a.v.short)}</b> ${bookChip(d.a.v.src)}<br>
+                  <a href="#/match/${d.b.slug}/${d.b.ev.id}">${name(d.b)}</a> <b>${esc(d.b.v.short)}</b> ${bookChip(d.b.v.src)}</td>
               <td><b>${d.odds.toFixed(2)}</b></td>
               <td>${pct(d.p)}</td>
               <td class="ok">+${(d.edge * 100).toFixed(0)}%</td>
@@ -474,7 +482,7 @@
             </tr>`).join('')}
           </tbody>
         </table>
-        <p class="hint">Прибуток залежить від того, які саме матчі зіграють: «діапазон» — від гіршого випадку (зіграли ставки з найменшими кф) до кращого (з найбільшими). «Шанс» — наскільки ймовірно, що зіграє саме стільки матчів, за прогнозом додатка. Кф — DraftKings; у вашого букмекера можуть бути інші.</p>
+        <p class="hint">Прибуток залежить від того, які саме матчі зіграють: «діапазон» — від гіршого випадку (зіграли ставки з найменшими кф) до кращого (з найбільшими). «Шанс» — наскільки ймовірно, що зіграє саме стільки матчів, за прогнозом додатка. Кф — VBET, а для матчів, яких немає в його лінії, — DraftKings.</p>
       </section>`;
   }
 
@@ -498,6 +506,7 @@
     await Promise.all([
       api.lineups(slug, id).then(l => state.lineups.set(id, l)).catch(() => {}),
       loadTeamStats([{ slug, ev }]),
+      FP.vbet.load(false),
     ]);
     if (rid !== renderId) return;
     const pred = predictionFor(slug, ev);
@@ -545,7 +554,7 @@
         <div class="tip-main">${esc(pred.value.long)}</div>
         <div class="tip-stats">
           <span>Ймовірність <b>${pct(pred.value.p)}</b></span>
-          <span>Кф DraftKings <b>${pred.value.odds.toFixed(2)}</b></span>
+          <span>Кф ${bookChip(pred.value.src)} <b>${pred.value.odds.toFixed(2)}</b></span>
           <span>Справедливий кф <b>${fair(pred.value.p)}</b> ${help('fair')}</span>
           <span>Перевага <b>+${(pred.value.edge * 100).toFixed(1)}%</b></span>
         </div>
@@ -553,7 +562,11 @@
       </section>` : `
       <section class="card notice-card">
         <div class="tip-label">Цінна ставка ${help('value')}</div>
-        <p>На цей матч цінної ставки немає: кф DraftKings не дають переваги над прогнозом${ev.odds ? '' : ' — букмекер ще не виставив кф'}.</p>
+        <p>${(() => {
+          const o = FP.vbet.withOdds(slug, ev).odds;
+          return o ? `На цей матч цінної ставки немає: кф ${o.src === 'vbet' ? 'VBET' : 'DraftKings (у лінії VBET матчу немає)'} не дають переваги над прогнозом.`
+            : 'Цінної ставки немає: букмекери ще не виставили кф на цей матч.';
+        })()}</p>
       </section>`}
 
       <section class="card">
@@ -583,14 +596,14 @@
       return `
         <section class="card tipcard ${r ? 'hi' : 'lo'}">
           <div class="tip-label">Цінна ставка до матчу</div>
-          <div class="tip-main">${esc(v.short)} @ ${v.odds.toFixed(2)} ${r === true ? '<i class="ok">✓ зіграла</i>' : r === false ? '<i class="bad">✗ не зіграла</i>' : r === null ? '↺' : '<small>результат — у «Статистиці»</small>'}</div>
+          <div class="tip-main">${esc(v.short)} @ ${v.odds.toFixed(2)} ${bookChip(v.src)} ${r === true ? '<i class="ok">✓ зіграла</i>' : r === false ? '<i class="bad">✗ не зіграла</i>' : r === null ? '↺' : '<small>результат — у «Статистиці»</small>'}</div>
           <p class="hint">Ймовірність до матчу ${pct(v.p)}. Результат враховано у вкладці «Статистика».</p>
         </section>`;
     }
     return `
       <section class="card notice-card">
         <div class="tip-label">Матч іде</div>
-        <p>Цінна ставка, зафіксована до старту: <b>${esc(v.short)}</b> @ ${v.odds.toFixed(2)} (${pct(v.p)}). Вона враховується у статистиці.</p>
+        <p>Цінна ставка, зафіксована до старту: <b>${esc(v.short)}</b> @ ${v.odds.toFixed(2)} ${bookChip(v.src)} (${pct(v.p)}). Вона враховується у статистиці.</p>
       </section>`;
   }
 
@@ -843,7 +856,7 @@
   }
 
   // ---------- Віртуальний рахунок ----------
-  // Симуляція: на кожну цінну ставку — 50 грн за кф DraftKings.
+  // Симуляція: на кожну цінну ставку — 50 грн за кф букмекера (VBET або DraftKings).
   const STAKE = 50;
   const BANK_CATS = { value: 'Цінні' };
   const bankStart = () => { try { return Number(localStorage.getItem('fp_bank_start')) || 5000; } catch { return 5000; } };
@@ -855,7 +868,7 @@
     for (const r of singlesData()) {
       if (!r.value) continue;
       bets.push({ ts: r.ts, slug: r.slug, id: r.id, title: `${r.home} — ${r.away}`, score: r.valSt.score,
-        cat: 'value', pick: r.value.short, odds: r.value.odds, book: true, s: r.valSt.s });
+        cat: 'value', pick: r.value.short, odds: r.value.odds, src: r.value.src, s: r.valSt.s });
     }
     return bets.map(b => ({ ...b, profit: b.s === 'win' ? STAKE * (b.odds - 1) : b.s === 'loss' ? -STAKE : 0 }));
   }
@@ -894,7 +907,7 @@
         <div class="hrow-main">
           <small>${esc(dateOf(b.ts))} · ${BANK_CATS[b.cat]}</small>
           <span>${esc(b.title)} ${b.score ? `<b>${esc(b.score)}</b>` : ''}</span>
-          <em>${esc(b.pick)} @ ${b.odds.toFixed(2)} ${b.book ? 'DK' : 'спр.'} · ставка 50 грн</em>
+          <em>${esc(b.pick)} @ ${b.odds.toFixed(2)} ${bookChip(b.src)} · ставка 50 грн</em>
         </div>
         <div class="hrow-st bank-res ${b.profit > 0 ? 'ok' : b.profit < 0 ? 'bad' : ''}">${b.s === 'void' ? '↺ 0' : uah(b.profit)}</div>
       </a>`).join('');
@@ -912,8 +925,9 @@
           <div><b>${wins} / ${losses}</b><span>виграно / програно<br>в грі ${pending.length} (${money(pending.length * STAKE)})</span></div>
         </div>
         ${balanceChart(start, settled)}
-        <p class="hint">Симуляція: на кожну цінну ставку ставиться 50 грн за кф DraftKings на момент останнього прогнозу перед стартом. У вашого букмекера кф може відрізнятися.</p>
+        <p class="hint">Симуляція: на кожну цінну ставку ставиться 50 грн за кф на момент останнього прогнозу перед стартом — VBET, а для матчів, яких немає в його лінії, DraftKings (позначка біля кожної ставки).</p>
       </section>
+      ${bookTable(settled)}
       ${(() => {
         const single = settled.filter(b => DONE(b.s));
         if (!single.length) return '';
@@ -927,6 +941,19 @@
       ${recent ?`<section class="card"><h3>Ставки</h3>${recent}</section>` : '<div class="empty">Ще немає розрахованих ставок.<br>Вони з\'являться після перших зіграних матчів.</div>'}`;
   }
 
+  // Результат окремо за кф VBET і за кф DraftKings.
+  function bookTable(settled) {
+    if (!settled.length) return '';
+    const rows = [['vbet', 'VBET'], ['dk', 'DraftKings']].map(([src, label]) => {
+      const list = settled.filter(b => (b.src === 'vbet' ? 'vbet' : 'dk') === src);
+      if (!list.length) return '';
+      const pr = list.reduce((s, b) => s + b.profit, 0), w = list.filter(b => b.s === 'win').length;
+      return `<tr><td>${bookChip(src)} ${label}</td><td>${w} з ${list.filter(b => DONE(b.s)).length}</td><td class="${pr >= 0 ? 'ok' : 'bad'}">${uah(pr)}</td><td>${(pr / (list.length * STAKE) * 100).toFixed(0)}%</td></tr>`;
+    }).join('');
+    return `<section class="card"><h3>За букмекером</h3>
+      <table class="markets"><thead><tr><th>Кф</th><th>Зіграло</th><th>Прибуток</th><th>ROI</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+  }
+
   $view.addEventListener('change', e => {
     if (e.target.id !== 'bank-start') return;
     try { localStorage.setItem('fp_bank_start', String(Math.max(0, Number(e.target.value) || 0))); } catch {}
@@ -934,7 +961,7 @@
   });
 
   // ---------- Цінні ставки ----------
-  // Ставки, де наша ймовірність вища, ніж закладено в кф DraftKings (перевага від 3%, ймовірність від 30%).
+  // Ставки, де наша ймовірність вища, ніж закладено в кф букмекера (перевага від 3%, ймовірність від 30%).
   // Прибуток рахується за реальним кф букмекера — це найчесніша перевірка, чи модель «б'є» ринок.
   function valueRows() {
     return singlesData().filter(r => r.value).map(r => ({
@@ -966,14 +993,14 @@
             const pl = s === 'win' ? (r.v.odds - 1) * STAKE : s === 'loss' ? -STAKE : 0;
             return `<tr class="st-${s}">
               <td><a href="#/match/${r.slug}/${r.id}">${esc(r.home)} — ${esc(r.away)}</a><small>${esc(dateOf(r.ts))} · ${esc(leagueLabel(r.slug))}</small></td>
-              <td><b>${esc(r.v.short)}</b> @ ${r.v.odds.toFixed(2)}<small>${pct(r.v.p)} · перевага +${(r.v.edge * 100).toFixed(0)}%</small></td>
+              <td><b>${esc(r.v.short)}</b> @ ${r.v.odds.toFixed(2)} ${bookChip(r.v.src)}<small>${pct(r.v.p)} · перевага +${(r.v.edge * 100).toFixed(0)}%</small></td>
               <td><b>${esc(r.v.st.score || '')}</b> ${STATUS_ICON[s] || ''}<small>${esc(outcomeOf(r) || '')}</small></td>
               <td class="${pl > 0 ? 'ok' : pl < 0 ? 'bad' : ''}">${s === 'void' ? '↺ 0' : uah(pl)}</td>
             </tr>`;
           }).join('')}</tbody>
           <tfoot><tr><td>Разом: ${w} з ${done.filter(r => DONE(r.v.st.s)).length}</td><td></td><td></td><td class="${total >= 0 ? 'ok' : 'bad'}">${uah(total)}</td></tr></tfoot>
         </table>
-        <p class="hint">«Результат» — фінальний рахунок і що зіграло в матчі: П1 / нічия / П2 і тотал 2.5. Ставка — 50 грн за кф DraftKings.</p>
+        <p class="hint">«Результат» — фінальний рахунок і що зіграло в матчі: П1 / нічия / П2 і тотал 2.5. Ставка — 50 грн за кф позначеного букмекера.</p>
       </section>`;
   }
 
@@ -1032,7 +1059,7 @@
     return `
       <section class="card">
         <div class="kpis">
-          <div><b class="${profit >= 0 ? 'ok' : 'bad'}">${done.length ? units(profit) : '—'}</b><span>прибуток, од.<br>за кф DraftKings</span></div>
+          <div><b class="${profit >= 0 ? 'ok' : 'bad'}">${done.length ? units(profit) : '—'}</b><span>прибуток, од.<br>за кф VBET / DK</span></div>
           <div><b>${done.length ? (profit / done.length * 100).toFixed(0) + '%' : '—'}</b><span>ROI<br>${wins} з ${done.length} зіграло</span></div>
           <div><b>${pending}</b><span>очікують<br>результату</span></div>
         </div>
@@ -1041,7 +1068,7 @@
           <div><b>${avgOdds != null ? avgOdds.toFixed(2) : '—'}</b><span>середній<br>кф</span></div>
           <div><b>${avgEdge != null ? '+' + (avgEdge * 100).toFixed(1) + '%' : '—'}</b><span>середня<br>перевага</span></div>
         </div>
-        <p class="hint">Цінна ставка — ринок, де наша ймовірність вища, ніж закладено в кф DraftKings: перевага від 3% при ймовірності від 30%. Прибуток — при ставці 1 од. на кожну за кф DraftKings. Цінні ставки мають вищі кф і програють часто, тож оцінювати їх можна лише за прибутком на сотнях ставок.</p>
+        <p class="hint">Цінна ставка — ринок, де наша ймовірність вища, ніж закладено в кф букмекера: перевага від 3% при ймовірності від 30%. Кф — VBET, а якщо матчу немає в його лінії, — DraftKings. Прибуток — при ставці 1 од. на кожну. Цінні ставки мають вищі кф і програють часто, тож оцінювати їх можна лише за прибутком на сотнях ставок.</p>
       </section>
       ${done.length ? `
       <section class="card"><h3>За розміром переваги</h3>${byEdge}
@@ -1056,13 +1083,13 @@
             <div class="hrow-main">
               <small>${esc(dateOf(r.ts))} ${esc(timeOf(r.ts))} · ${esc(leagueLabel(r.slug))}</small>
               <span>${esc(r.home)} — ${esc(r.away)}</span>
-              <em>${esc(r.v.short)} @ ${r.v.odds.toFixed(2)} · перевага +${(r.v.edge * 100).toFixed(1)}%</em>
+              <em>${esc(r.v.short)} @ ${r.v.odds.toFixed(2)} ${bookChip(r.v.src)} · перевага +${(r.v.edge * 100).toFixed(1)}%</em>
             </div>
             <div class="hrow-st">${r.v.st.s === 'live' ? '<span class="live">LIVE</span>' : ''}</div>
           </a>`).join('')}</section>` : '';
       })()}
       ${valueResultsTable(rows)}
-      ${rows.length ? '' : '<div class="empty">За цей період цінних ставок ще немає.<br>Вони з\'являються, коли кф DraftKings вищий, ніж має бути за прогнозом.</div>'}`;
+      ${rows.length ? '' : '<div class="empty">За цей період цінних ставок ще немає.<br>Вони з\'являються, коли кф букмекера вищий, ніж має бути за прогнозом.</div>'}`;
   }
 
   // Таблиця «зіграло / очікувалось / прибуток / ROI» для груп ставок. kOf — кф ставки
@@ -1123,7 +1150,7 @@
     const journal = singles.filter(r => DONE(r.valSt.s)).slice(0, 200).map(r => `
       <tr><td>${esc(FP.dateOfTs(r.ts).split('-').reverse().join('.'))}</td><td>${esc(leagueLabel(r.slug))}</td>
         <td>${esc(r.home)} — ${esc(r.away)}</td><td>${esc(r.valSt.score || '')}</td>
-        <td>${esc(r.value.short)} @ ${r.value.odds.toFixed(2)}</td><td>${pct(r.value.p)}</td><td class="${r.valSt.s === 'win' ? 'pos' : 'neg'}">${RES[r.valSt.s]}</td></tr>`).join('');
+        <td>${esc(r.value.short)} @ ${r.value.odds.toFixed(2)} ${FP.bookName(r.value.src)}</td><td>${pct(r.value.p)}</td><td class="${r.valSt.s === 'win' ? 'pos' : 'neg'}">${RES[r.valSt.s]}</td></tr>`).join('');
 
     const period = state.histPeriod ? `останні ${state.histPeriod} днів` : 'увесь час';
     return `
@@ -1154,14 +1181,16 @@
             <p class="meta">Стартовий банк ${money(bankStart())} → баланс <b>${money(bankStart() + pr)}</b></p>
             ${table(['', 'Ставок', 'Виграно', 'Поставлено', 'Прибуток', 'ROI'], rows)}`;
         })()}
-        <h2>Цінні ставки за розміром переваги (кф DraftKings)</h2>
+        <h2>Цінні ставки за букмекером</h2>
+        ${table(H, [['vbet', 'Кф VBET'], ['dk', 'Кф DraftKings']].map(([s, l]) => row(l, agg(values.filter(v => (v.src === 'vbet' ? 'vbet' : 'dk') === s), x => x.odds))).join(''))}
+        <h2>Цінні ставки за розміром переваги</h2>
         ${table(H, [[0.03, 0.06, 'Перевага 3–6%'], [0.06, 0.10, 'Перевага 6–10%'], [0.10, 9, 'Перевага від 10%']]
           .map(([lo, hi, l]) => row(l, agg(values.filter(v => v.p * v.odds - 1 >= lo && v.p * v.odds - 1 < hi), x => x.odds))).join('')
           + row('Усі цінні ставки', agg(values, x => x.odds)))}
         <h2>Цінні ставки за чемпіонатами</h2>
         ${table(H, groupBy(values, x => leagueLabel(x.slug)).map(([l, xs]) => row(l, agg(xs, x => x.odds))).join(''))}
         ${journal ? `<h2>Журнал цінних ставок</h2>${table(['Дата', 'Турнір', 'Матч', 'Рахунок', 'Ставка', 'Ймов.', ''], journal)}` : ''}
-        <p class="note">«Очікувалось» — середня ймовірність за прогнозом додатка. Прибуток — при ставці 1 од. на кожну цінну ставку за кф DraftKings; у вашого букмекера кф може відрізнятися. Прогнози ймовірнісні та не гарантують виграшу. 18+.</p>
+        <p class="note">«Очікувалось» — середня ймовірність за прогнозом додатка. Прибуток — при ставці 1 од. на кожну цінну ставку за кф VBET, а для матчів, яких немає в його лінії, — за кф DraftKings. Прогнози ймовірнісні та не гарантують виграшу. 18+.</p>
       </div>`;
   }
 
@@ -1201,15 +1230,15 @@
     if (tab === 'bank') {
       rows = [['Дата', 'Тип', 'Подія', 'Рахунок', 'Ставка', 'Кф', 'Джерело кф', 'Сума, грн', 'Результат', 'Прибуток, грн']];
       for (const b of bankBets().sort((x, y) => x.ts - y.ts)) {
-        rows.push([FP.dateOfTs(b.ts), BANK_CATS[b.cat], b.title, b.score || '', b.pick, num(b.odds), b.book ? 'DraftKings' : 'справедливий',
+        rows.push([FP.dateOfTs(b.ts), BANK_CATS[b.cat], b.title, b.score || '', b.pick, num(b.odds), b.src === 'vbet' ? 'VBET' : 'DraftKings',
           STAKE, RES[b.s] || 'немає даних', DONE(b.s) || b.s === 'void' ? num(b.profit) : '']);
       }
     } else if (tab === 'value') {
-      rows = [['Дата', 'Час', 'Турнір', 'Господарі', 'Гості', 'Рахунок', 'Що зіграло', 'Цінна ставка', 'Ймовірність', 'Кф DraftKings', 'Перевага', 'Результат', 'Прибуток, грн']];
+      rows = [['Дата', 'Час', 'Турнір', 'Господарі', 'Гості', 'Рахунок', 'Що зіграло', 'Цінна ставка', 'Ймовірність', 'Кф', 'Букмекер', 'Перевага', 'Результат', 'Прибуток, грн']];
       for (const r of valueRows()) {
         const s = r.v.st.s;
         rows.push([FP.dateOfTs(r.ts), timeOf(r.ts), leagueLabel(r.slug), r.home, r.away, r.v.st.score || '', outcomeOf(r) || '', r.v.short,
-          num(r.v.p), num(r.v.odds), num(r.v.edge), RES[s] || 'немає даних',
+          num(r.v.p), num(r.v.odds), r.v.src === 'vbet' ? 'VBET' : 'DraftKings', num(r.v.edge), RES[s] || 'немає даних',
           s === 'win' ? num((r.v.odds - 1) * STAKE) : s === 'loss' ? -STAKE : '']);
       }
     }
