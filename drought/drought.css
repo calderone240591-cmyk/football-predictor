@@ -37,54 +37,38 @@
 .dr-sp-row small { font-size: 11px; color: var(--muted); }
 .dr-sp-row.on > span { color: var(--sp); font-weight: 700; }
 .dr-sp .hint .sp-badge { margin: 1px 0; }
-/* Серія: наступна ставка і черга матчів */
-/* Картка серії */
-.sc { padding: 12px 14px; }
-.sc > summary { list-style: none; cursor: pointer; display: grid; gap: 8px; }
-.sc > summary::-webkit-details-marker { display: none; }
+/* Картка серії програшів */
+.sc { display: grid; gap: 10px; padding: 12px 14px; }
 .sc-head { display: flex; align-items: center; gap: 8px; }
 .sc-head b { font-size: 15px; }
-.sc-head small { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
-.sc[open] .sc-head small { color: var(--accent); }
-.sc-match { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; font-size: 14px; }
-.sc-match > b { grid-row: span 2; font-size: 16px; font-variant-numeric: tabular-nums; }
+.sc-head small { margin-left: auto; font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+.sc.special .sc-head small { color: var(--sp); }
+.sc-hist { display: flex; flex-wrap: wrap; gap: 4px; }
+.sc-hist span { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px 2px 2px; border-radius: 999px; font-size: 12px; background: var(--surface-2); color: var(--muted); }
+.sc-hist span i { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 11px; font-weight: 700; background: var(--line); color: var(--text); }
+.sc-hist span.loss { background: color-mix(in srgb, var(--lo) 12%, transparent); color: var(--text); }
+.sc-hist span.loss i { background: var(--lo); color: var(--accent-ink); }
+.sc-hist small { font-size: 10px; color: var(--muted); }
+.sc-next { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.sc.special .sc-next { background: color-mix(in srgb, var(--sp) 14%, transparent); }
+.sc-no { grid-column: 1 / -1; font-size: 13px; font-weight: 700; color: var(--accent); }
+.sc.special .sc-no { color: var(--sp); }
+.sc-match { display: grid; gap: 1px; font-size: 14px; min-width: 0; }
+.sc-match > b { font-size: 13px; color: var(--muted); }
 .sc-match > b.live { color: var(--lo); }
+.sc-match > span { font-weight: 700; font-size: 15px; }
 .sc-match small { font-size: 11px; color: var(--muted); }
-.sc-bet { display: grid; grid-template-columns: 52px auto 1fr auto; gap: 8px; align-items: center; padding: 7px 10px; border-radius: 10px; font-size: 13px; background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.sc-bet.sp2, .sc-bet.sp3, .sc-bet.sp4 { background: color-mix(in srgb, var(--sp) 16%, transparent); }
-.sc-label { font-weight: 700; }
-.sc-no { font-weight: 700; white-space: nowrap; }
-.sc-bet.sp2 .sc-no, .sc-bet.sp3 .sc-no, .sc-bet.sp4 .sc-no { color: var(--sp); }
-.sc-chips { display: flex; flex-wrap: wrap; gap: 3px; }
-.sc-chips i { width: 18px; height: 18px; border-radius: 4px; display: grid; place-items: center; font-style: normal; font-size: 11px; font-weight: 700; background: var(--surface-2); color: var(--muted); }
-.sc-chips i.win { background: var(--hi); color: var(--accent-ink); }
-.sc-chips i.loss { background: var(--lo); color: var(--accent-ink); }
-.sc-chips i.now { background: var(--accent); color: var(--accent-ink); }
-.sc-k { white-space: nowrap; color: var(--muted); font-size: 12px; }
-.sc-k .dr-k { font-size: 14px; color: var(--text); }
-.sc .q-list { margin-top: 10px; }
+.sc-k { white-space: nowrap; color: var(--muted); font-size: 12px; text-align: right; }
+.sc-k .dr-k { font-size: 17px; color: var(--text); }
+.sc-later { margin: 0; font-size: 12px; color: var(--muted); }
+.sc-closed { display: grid; grid-template-columns: auto auto 1fr; gap: 8px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.sc-closed:first-of-type { border-top: 0; }
+.sc-closed small { font-size: 11px; color: var(--muted); }
+.sc-icons { display: flex; gap: 2px; }
+.sc-icons i { width: 16px; height: 16px; border-radius: 4px; display: grid; place-items: center; font-style: normal; font-size: 10px; font-weight: 700; background: var(--surface-2); color: var(--muted); }
+.sc-icons i.win { background: var(--hi); color: var(--accent-ink); }
+.sc-icons i.loss { background: var(--lo); color: var(--accent-ink); }
 .ser-intro { margin-bottom: 10px; }
-.q-odds { font-size: 11px; color: var(--muted); white-space: nowrap; }
-.ser-chips { display: flex; flex-wrap: wrap; gap: 4px; }
-.ser-chip { font-style: normal; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
-.ser-chip.win { background: color-mix(in srgb, var(--hi) 20%, transparent); color: var(--hi); }
-.ser-chip.loss { background: color-mix(in srgb, var(--lo) 16%, transparent); color: var(--lo); }
-.ser-chip.now { background: var(--accent); color: var(--accent-ink); }
-.ser-prio { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--sp); }
-.ser-after { margin-top: -4px; }
-.q-list { display: grid; }
-.q-day { margin-top: 10px; padding-bottom: 4px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
-.q-day:first-child { margin-top: 0; }
-.q-row { display: grid; grid-template-columns: 46px 1fr auto; gap: 8px; align-items: center; padding: 8px 6px; border-top: 1px solid var(--line); font-size: 14px; }
-.q-row small { color: var(--muted); }
-.q-row.done { opacity: .7; }
-.q-row.next { background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 8px; font-weight: 700; }
-.q-row .live { color: var(--lo); }
-.q-res { display: flex; gap: 4px; }
-.q-res i { font-style: normal; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 999px; white-space: nowrap; background: var(--surface-2); color: var(--muted); }
-.q-res i.win { color: var(--hi); background: color-mix(in srgb, var(--hi) 16%, transparent); }
-.q-res i.loss { color: var(--lo); background: color-mix(in srgb, var(--lo) 14%, transparent); }
-.q-res i.now { color: var(--accent-ink); background: var(--accent); }
 .dr-more { margin-top: 16px; }
 .dr-more > summary { cursor: pointer; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; font-weight: 700; font-size: 14px; color: var(--muted); }
 /* Серії виграшів і програшів */
