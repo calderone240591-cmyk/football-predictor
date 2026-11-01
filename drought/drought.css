@@ -37,19 +37,32 @@
 .dr-sp-row small { font-size: 11px; color: var(--muted); }
 .dr-sp-row.on > span { color: var(--sp); font-weight: 700; }
 .dr-sp .hint .sp-badge { margin: 1px 0; }
-/* Розклад серії по часу */
-.ser-table { table-layout: fixed; width: 100%; }
-.ser-table th:nth-child(1) { width: 19%; } .ser-table th:nth-child(2) { width: 31%; }
-.ser-table.dr-agg td, .ser-table.dr-agg th { white-space: normal; overflow-wrap: anywhere; }
-.ser-table.dr-agg td:nth-child(n+3), .ser-table.dr-agg th:nth-child(n+3) { text-align: left; }
-.ser-table.dr-agg tr.ser-day td { text-align: left; padding-top: 12px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
-.ser-table tr.ser-done td { opacity: .75; }
-.ser-table tr.ser-next td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.ser-table td.ser-now.sp2, .ser-table td.ser-now.sp3, .ser-table td.ser-now.sp4 { background: color-mix(in srgb, var(--sp) 18%, transparent); }
-.ser-table td.ser-if { color: var(--muted); }
-.ser-table td.ser-win small { color: var(--hi); }
-.ser-table .live { color: var(--lo); }
-.ser-table .sp-badge { margin-top: 2px; }
+/* Серія: наступна ставка і черга матчів */
+.dr-bet i .dr-k { font-size: 14px; color: var(--text); }
+.dr-bet-ser { grid-column: 1 / -1; display: grid; gap: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.ser-line { font-size: 13px; }
+.dr-bet .ser-line b { font-size: 13px; }
+.q-odds { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.ser-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.ser-chip { font-style: normal; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+.ser-chip.win { background: color-mix(in srgb, var(--hi) 20%, transparent); color: var(--hi); }
+.ser-chip.loss { background: color-mix(in srgb, var(--lo) 16%, transparent); color: var(--lo); }
+.ser-chip.now { background: var(--accent); color: var(--accent-ink); }
+.ser-prio { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--sp); }
+.ser-after { margin-top: -4px; }
+.q-list { display: grid; }
+.q-day { margin-top: 10px; padding-bottom: 4px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.q-day:first-child { margin-top: 0; }
+.q-row { display: grid; grid-template-columns: 46px 1fr auto; gap: 8px; align-items: center; padding: 8px 6px; border-top: 1px solid var(--line); font-size: 14px; }
+.q-row small { color: var(--muted); }
+.q-row.done { opacity: .7; }
+.q-row.next { background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 8px; font-weight: 700; }
+.q-row .live { color: var(--lo); }
+.q-res { display: flex; gap: 4px; }
+.q-res i { font-style: normal; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 999px; white-space: nowrap; background: var(--surface-2); color: var(--muted); }
+.q-res i.win { color: var(--hi); background: color-mix(in srgb, var(--hi) 16%, transparent); }
+.q-res i.loss { color: var(--lo); background: color-mix(in srgb, var(--lo) 14%, transparent); }
+.q-res i.now { color: var(--accent-ink); background: var(--accent); }
 .dr-more { margin-top: 16px; }
 .dr-more > summary { cursor: pointer; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; font-weight: 700; font-size: 14px; color: var(--muted); }
 /* Серії виграшів і програшів */

@@ -23,7 +23,7 @@ FP.vbet = (() => {
   // Кутові 1-го тайму не беремо: ESPN рахує їх лише з текстового коментаря, якого немає в багатьох
   // лігах, тож такі ставки часто неможливо розрахувати.
   const TYPES = ['P1XP2', '1X12X2', 'OverUnder', 'AsianHandicap', 'HalfTimeOverUnder',
-    'CornersOverUnder', 'YellowCardsOverUnder', 'RedCardsOverUnder'];
+    'CornersOverUnder', 'YellowCardsOverUnder', 'RedCardsOverUnder', 'Team1OverUnder', 'Team2OverUnder'];
   const HCP = new Set([0, 1, -1, 1.5, -1.5, 2.5, -2.5]);
   const half = b => b != null && Math.abs(b * 2 % 2) === 1;
   const ou = (prefix, lines) => (mk, ev) => {
@@ -49,6 +49,9 @@ FP.vbet = (() => {
     CornersOverUnder: ou('C', b => half(b) && b >= 7.5 && b <= 12.5),
     YellowCardsOverUnder: ou('Y', b => half(b) && b >= 2.5 && b <= 5.5),
     RedCardsOverUnder: ou('R', b => b === 0.5),
+    // Індивідуальні тотали для «Сухих серій»: T1O1 — ІТБ 1 господарів (рівно 1 — повернення), T1O15 — ІТБ 1.5.
+    Team1OverUnder: (mk, ev) => (/^over/i.test(ev.type || ev.name) && [1, 1.5].includes(+mk.base) ? `T1O${String(+mk.base).replace('.', '')}` : null),
+    Team2OverUnder: (mk, ev) => (/^over/i.test(ev.type || ev.name) && [1, 1.5].includes(+mk.base) ? `T2O${String(+mk.base).replace('.', '')}` : null),
   };
 
   // ---------- запит до Swarm ----------
@@ -162,7 +165,16 @@ FP.vbet = (() => {
     return o ? { ...ev, odds: o } : ev;
   }
 
+  // Індивідуальний тотал команди side ('home' | 'away'): { it1, it15 } — кф VBET на ТБ 1 і ТБ 1.5 або null.
+  function teamTotals(slug, ev, side) {
+    const g = find(slug, ev);
+    if (!g) return null;
+    const t = side === 'home' ? 'T1' : 'T2';
+    const out = { it1: g.book[`${t}O1`] || null, it15: g.book[`${t}O15`] || null };
+    return out.it1 || out.it15 ? out : null;
+  }
+
   const status = () => ({ loadedAt, error: lastError, games: [...games.values()].reduce((s, l) => s + l.length, 0) });
 
-  return { load, withOdds, status, COMPS };
+  return { load, withOdds, teamTotals, status, COMPS };
 })();
