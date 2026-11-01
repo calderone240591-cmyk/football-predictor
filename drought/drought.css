@@ -69,6 +69,18 @@
 .sc-icons i.win { background: var(--hi); color: var(--accent-ink); }
 .sc-icons i.loss { background: var(--lo); color: var(--accent-ink); }
 .ser-intro { margin-bottom: 10px; }
+/* Усі ставки по часу */
+.q-list { display: grid; }
+.q-day { margin-top: 10px; padding-bottom: 4px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.q-day:first-child { margin-top: 0; }
+.q-row { display: grid; grid-template-columns: 46px 1fr auto; gap: 8px; align-items: center; padding: 8px 6px; border-top: 1px solid var(--line); font-size: 14px; }
+.q-row.next { background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 8px; font-weight: 700; }
+.q-row.sp2, .q-row.sp3, .q-row.sp4 { background: color-mix(in srgb, var(--sp) 14%, transparent); }
+.q-row .live { color: var(--lo); }
+.q-row > span small { display: block; font-size: 11px; font-weight: 400; color: var(--muted); }
+.q-row.sp2 small, .q-row.sp3 small, .q-row.sp4 small { color: var(--sp); font-weight: 700; }
+.q-odds { font-size: 11px; color: var(--muted); white-space: nowrap; text-align: right; }
+.q-odds .dr-k { font-size: 13px; color: var(--text); }
 .dr-more { margin-top: 16px; }
 .dr-more > summary { cursor: pointer; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; font-weight: 700; font-size: 14px; color: var(--muted); }
 /* Серії виграшів і програшів */

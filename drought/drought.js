@@ -356,12 +356,37 @@
       <span class="sc-icons">${s.items.filter(y => !y.cond).map(y => `<i class="${y.st}">${ICONS[y.st] || '·'}</i>`).join('')}</span>
       <small>виграш на ставці №${s.items[s.items.length - 1].n} · ${team(s.items[s.items.length - 1].r)} ${when(s.closed)}</small></div>`;
 
+    // Усі незіграні рекомендації по часу: на кожну ставиш; номер ставки залежить від результату попередньої в серії.
+    const dayTitle = ts => {
+      const o = Math.round((dayStart(ts) - dayStart(now)) / 86400);
+      return o >= 0 && o <= 2 ? dayLabel(o) : `${WD[new Date(ts * 1000).getDay()]}, ${dateOf(ts)}`;
+    };
+    const pending = all.flatMap(s => s.items.map((y, i) => ({ s, y, prev: s.items[i - 1] })).filter(z => z.y.st == null))
+      .sort((a, b) => a.y.r.ev.ts - b.y.r.ev.ts);
+    let day = null;
+    const listHtml = pending.map(({ s, y, prev }) => {
+      const r = y.r, ev = r.ev, ds = dayStart(ev.ts);
+      const head = ds !== day ? `<div class="q-day">${esc(dayTitle(ev.ts))}</div>` : '';
+      day = ds;
+      const lvl = y.cond ? 0 : spLevel(y.run);
+      const note = !y.cond ? (y.run ? `ставка №${y.n} серії з ${dateOf(s.items[0].r.ev.ts)}` : 'ставка №1 — нова серія')
+        : `№${y.n}, якщо ✗ ${team(prev.r)}; якщо ✓ — нова серія`;
+      return `${head}<div class="q-row ${!y.cond ? 'next' : ''} ${lvl ? `sp${lvl}` : ''}">
+        <b>${ev.state === 'in' ? '<span class="live">LIVE</span>' : timeOf(ev.ts)}</b>
+        <span>${vs(r)}<small>${note}${lvl ? ' ' + SP_LEVELS[lvl].stars : ''}</small></span>
+        <span class="q-odds">${oddsHtml(r, key)}</span></div>`;
+    }).join('');
+
     const histTxt = [2, 3, 4].map(l => `після ${SP_LEVELS[l].runs} — ${hist[l].n ? `${hist[l].wins} з ${hist[l].n}` : 'не було'}`).join(', ');
     $view.innerHTML = `
       <p class="summary">Проаналізовано ${matches(analyzed)} у ${d.mode === 'all' ? `${COMPS.length} турнірах` : `${CHAMPS.length} чемпіонатах`} на 10 днів · рекомендацій: <b>${upcoming.length}</b>${d.errors ? ` · не завантажено ліг: ${d.errors}` : ''}</p>
       <div class="controls"><div class="segmented">${SPECIAL_BETS.slice().reverse().map(([k, , l]) => `<button class="${k === key ? 'on' : ''}" data-bet="${k}">${l}</button>`).join('')}</div></div>
       <p class="hint pad ser-intro">Серія — програші ${label} поспіль. Виграш закриває серію, наступний матч починає нову. У серії матчі йдуть по одному: наступний — після кінця попереднього, тож ставиш, знаючи результат.${key === 'it1' ? ' Повернення (рівно 1 гол) серію не закриває.' : ''}</p>
       ${active.length ? active.map(card).join('') : `<div class="empty">Найближчими днями немає матчів команд, що не забивають ${MIN_STREAK} тури і більше.</div>`}
+      ${pending.length ? `<section class="card"><h3>Усі ставки по часу · ${pending.length}</h3>
+        <div class="q-list">${listHtml}</div>
+        <p class="hint">Ставити на кожну. Підсвічені — наступні ставки серій (вище картками); для інших номер залежить від результату попередньої ставки серії: програє — серія триває, виграє — матч почне нову серію.</p>
+      </section>` : ''}
       ${closed.length ? `<section class="card"><h3>Закриті виграшем за 2 дні · ${closed.length}</h3>${closed.map(closedRow).join('')}</section>` : ''}
       <details class="dr-more"><summary>Пріоритети, кф та історія</summary>
         <div class="card">
