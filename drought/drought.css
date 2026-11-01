@@ -35,8 +35,21 @@
 .dr-sp-row { display: grid; gap: 2px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; }
 .dr-sp-row:first-of-type { border-top: 0; }
 .dr-sp-row small { font-size: 11px; color: var(--muted); }
-.dr-sp-row.on span { color: var(--sp); font-weight: 700; }
+.dr-sp-row.on > span { color: var(--sp); font-weight: 700; }
 .dr-sp .hint .sp-badge { margin: 1px 0; }
+/* Розклад серії по часу */
+.ser-table { table-layout: fixed; width: 100%; }
+.ser-table th:nth-child(1) { width: 19%; } .ser-table th:nth-child(2) { width: 31%; }
+.ser-table.dr-agg td, .ser-table.dr-agg th { white-space: normal; overflow-wrap: anywhere; }
+.ser-table.dr-agg td:nth-child(n+3), .ser-table.dr-agg th:nth-child(n+3) { text-align: left; }
+.ser-table.dr-agg tr.ser-day td { text-align: left; padding-top: 12px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.ser-table tr.ser-done td { opacity: .75; }
+.ser-table tr.ser-next td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.ser-table td.ser-now.sp2, .ser-table td.ser-now.sp3, .ser-table td.ser-now.sp4 { background: color-mix(in srgb, var(--sp) 18%, transparent); }
+.ser-table td.ser-if { color: var(--muted); }
+.ser-table td.ser-win small { color: var(--hi); }
+.ser-table .live { color: var(--lo); }
+.ser-table .sp-badge { margin-top: 2px; }
 .dr-more { margin-top: 16px; }
 .dr-more > summary { cursor: pointer; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; font-weight: 700; font-size: 14px; color: var(--muted); }
 /* Серії виграшів і програшів */
