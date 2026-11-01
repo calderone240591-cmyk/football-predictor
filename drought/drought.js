@@ -338,7 +338,7 @@
       const losses = s.lost.filter(y => y.st === 'loss').length;
       return `
         <section class="card sc ${s.lvl ? `special sp${s.lvl}` : ''}">
-          <div class="sc-head"><b>Серія ${s.no}</b>${s.lvl ? badge(s.lvl) : ''}<small>${losses ? `${losses} ${plural(losses, 'програш', 'програші', 'програшів')} поспіль` : 'нова серія'}</small></div>
+          <div class="sc-head"><b>${s.lost.length ? `Серія з ${when(s.items[0].r.ev.ts)}` : 'Нова серія'}</b>${s.lvl ? badge(s.lvl) : ''}<small>${losses ? `${losses} ${plural(losses, 'програш', 'програші', 'програшів')} поспіль` : 'програшів ще немає'}</small></div>
           ${s.lost.length ? `<div class="sc-hist">${s.lost.map(y => `<span class="${y.st}"><i>${ICONS[y.st]}</i>${team(y.r)} <small>${dateOf(y.r.ev.ts)}</small></span>`).join('')}</div>` : ''}
           <div class="sc-next">
             <div class="sc-no">Ставка №${x.n}</div>
@@ -352,7 +352,7 @@
 
     // Закриті виграшем за останні 2 дні.
     const closed = all.filter(s => s.closed && s.closed > now - 2 * 86400).sort((a, b) => b.closed - a.closed);
-    const closedRow = s => `<div class="sc-closed"><b>Серія ${s.no}</b>
+    const closedRow = s => `<div class="sc-closed"><b>з ${dateOf(s.items[0].r.ev.ts)}</b>
       <span class="sc-icons">${s.items.filter(y => !y.cond).map(y => `<i class="${y.st}">${ICONS[y.st] || '·'}</i>`).join('')}</span>
       <small>виграш на ставці №${s.items[s.items.length - 1].n} · ${team(s.items[s.items.length - 1].r)} ${when(s.closed)}</small></div>`;
 
