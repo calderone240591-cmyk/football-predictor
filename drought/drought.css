@@ -38,10 +38,32 @@
 .dr-sp-row.on > span { color: var(--sp); font-weight: 700; }
 .dr-sp .hint .sp-badge { margin: 1px 0; }
 /* Серія: наступна ставка і черга матчів */
-.dr-bet i .dr-k { font-size: 14px; color: var(--text); }
-.dr-bet-ser { grid-column: 1 / -1; display: grid; gap: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
-.ser-line { font-size: 13px; }
-.dr-bet .ser-line b { font-size: 13px; }
+/* Картка серії */
+.sc { padding: 12px 14px; }
+.sc > summary { list-style: none; cursor: pointer; display: grid; gap: 8px; }
+.sc > summary::-webkit-details-marker { display: none; }
+.sc-head { display: flex; align-items: center; gap: 8px; }
+.sc-head b { font-size: 15px; }
+.sc-head small { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.sc[open] .sc-head small { color: var(--accent); }
+.sc-match { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; font-size: 14px; }
+.sc-match > b { grid-row: span 2; font-size: 16px; font-variant-numeric: tabular-nums; }
+.sc-match > b.live { color: var(--lo); }
+.sc-match small { font-size: 11px; color: var(--muted); }
+.sc-bet { display: grid; grid-template-columns: 52px auto 1fr auto; gap: 8px; align-items: center; padding: 7px 10px; border-radius: 10px; font-size: 13px; background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.sc-bet.sp2, .sc-bet.sp3, .sc-bet.sp4 { background: color-mix(in srgb, var(--sp) 16%, transparent); }
+.sc-label { font-weight: 700; }
+.sc-no { font-weight: 700; white-space: nowrap; }
+.sc-bet.sp2 .sc-no, .sc-bet.sp3 .sc-no, .sc-bet.sp4 .sc-no { color: var(--sp); }
+.sc-chips { display: flex; flex-wrap: wrap; gap: 3px; }
+.sc-chips i { width: 18px; height: 18px; border-radius: 4px; display: grid; place-items: center; font-style: normal; font-size: 11px; font-weight: 700; background: var(--surface-2); color: var(--muted); }
+.sc-chips i.win { background: var(--hi); color: var(--accent-ink); }
+.sc-chips i.loss { background: var(--lo); color: var(--accent-ink); }
+.sc-chips i.now { background: var(--accent); color: var(--accent-ink); }
+.sc-k { white-space: nowrap; color: var(--muted); font-size: 12px; }
+.sc-k .dr-k { font-size: 14px; color: var(--text); }
+.sc .q-list { margin-top: 10px; }
+.ser-intro { margin-bottom: 10px; }
 .q-odds { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .ser-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .ser-chip { font-style: normal; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }

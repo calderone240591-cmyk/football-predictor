@@ -245,11 +245,6 @@
     render(d[mode]);
   }
 
-  const leagueChip = slug => {
-    const l = leagueOf(slug);
-    return `<span class="m-league"><img src="${FP.leagueLogo(l)}" alt="">${esc(l.short)}</span>`;
-  };
-
   const ICON = { win: '<i class="ok">✓</i>', loss: '<i class="bad">✗</i>', void: '↺', pending: '' };
 
   // ---------- Рекомендації ----------
@@ -260,33 +255,6 @@
     return k ? `кф <b class="dr-k">${k.toFixed(2)}</b> <span class="bk vbet">VBET</span>`
       : `кф ${(1 / r[key].p).toFixed(2)} <span class="bk dk">модель</span>`;
   };
-
-  function betRow(label, team, p, st, extra, odds, below) {
-    return `
-      <div class="dr-bet st-${st}">
-        <div><span>${label} · ${esc(team.short || team.name)}</span>${extra ? `<small>${extra}</small>` : ''}</div>
-        <b>${pct(p)}</b><i>${odds}</i><em>${ICON[st] || ''}</em>
-        ${below ? `<div class="dr-bet-ser">${below}</div>` : ''}
-      </div>`;
-  }
-
-  // ser — для наступної ставки серії: { it1: html, it15: html } — хід серії під кожною ставкою; lvl — пріоритет.
-  function recCard(r, ser, lvl = 0) {
-    const ev = r.ev;
-    const started = ev.state !== 'pre';
-    const status = model.isResult(ev) ? 'Завершено' : ev.state === 'in' ? `LIVE ${esc(ev.clock || '')}` : `${dateOf(ev.ts)} ${timeOf(ev.ts)}`;
-    const name = t => `<span class="${t.id === r.team.id ? 'dr-hl' : ''}">${esc(t.name)}</span>`;
-    return `
-      <section class="card drec ${lvl ? `special sp${lvl}` : ''}">
-        <div class="m-meta"><span class="${ev.state === 'in' ? 'live' : ''}">${status}</span>${leagueChip(r.slug)}</div>
-        <div class="dr-match">${name(ev.home)} <b>${started ? `${ev.home.score ?? 0} : ${ev.away.score ?? 0}` : '—'}</b> ${name(ev.away)}</div>
-        <div class="dr-streak"><b>${esc(r.team.name)}</b> не забиває <b>${matches(r.n)}</b> поспіль${r.lastGoal ? ` · останній гол ${dateOf(r.lastGoal)}` : ''}</div>
-        <div class="dr-bets">
-          ${betRow('ІТБ 1', r.team, r.it1.p, r.st1, 'рівно 1 гол — повернення', oddsHtml(r, 'it1'), ser && ser.it1)}
-          ${betRow('ІТБ 1.5', r.team, r.it15.p, r.st15, '', oddsHtml(r, 'it15'), ser && ser.it15)}
-        </div>
-      </section>`;
-  }
 
   // ---------- Серія по часу й особливі рекомендації ----------
   // Серія — ланцюжок рекомендацій, що йдуть одна за одною: наступний матч починається не раніше ніж через
@@ -308,33 +276,45 @@
   // Команда в матчі, що йде, вже забила 2 — ставка зайшла достроково.
   const earlyWin = r => !r.done && r.ev.state === 'in' && (r.ev[r.side].score ?? 0) >= 2;
 
-  // rows: [{ r, b: { it1: { run, st, sure }, it15: … } }] — run — програшів поспіль перед матчем; st — результат
-  // (null — ще не зіграно); sure: false — попередня ставка ще не зіграна, run — якщо вона програє.
+  // Усі рекомендації розкладаються на кілька паралельних серій: серія 1 бере матчі по черзі (наступний — після
+  // кінця попереднього), серія 2 — так само з тих, що лишились, і т. д., доки не розкладено всі. Будується від
+  // початку обліку, тож номер серії і її хід однакові на всіх пристроях.
+  // Серія: { no, rows: [{ r, b: { it1: { run, st, sure }, it15: … } }], next } — run — програшів поспіль перед
+  // матчем; st — результат (null — ще не зіграно); sure: false — попередня ставка серії ще не зіграна.
   function seriesInfo(d) {
-    const pool = [...d.recs.filter(r => r.done && r.ev.ts >= LAUNCH), ...upcomingRecs(d).filter(r => !VOID.test(r.ev.status || ''))]
+    let left = [...d.recs.filter(r => r.done && r.ev.ts >= LAUNCH), ...upcomingRecs(d).filter(r => !VOID.test(r.ev.status || ''))]
       .sort((a, b) => a.ev.ts - b.ev.ts || b.it15.p - a.it15.p);
-    const rows = [];
-    let free = -Infinity;
-    for (const r of pool) if (r.ev.ts >= free) { rows.push({ r, b: {} }); free = r.ev.ts + SER_GAP; }
-    const info = {};
-    for (const [key, stKey, label] of SPECIAL_BETS) {
-      let run = 0, from = null, sure = true;
-      const hist = { 2: { wins: 0, n: 0 }, 3: { wins: 0, n: 0 }, 4: { wins: 0, n: 0 } };
-      let next = null;
-      rows.forEach((x, i) => {
-        const r = x.r;
-        const st = r.done ? r[stKey] : earlyWin(r) ? 'win' : null;
-        x.b[key] = { run, st, sure, from };
-        const lvl = spLevel(run);
-        if (sure && lvl && (st === 'win' || st === 'loss')) { hist[lvl].n++; if (st === 'win') hist[lvl].wins++; }
-        if (st == null) { if (next == null) next = i; sure = false; }
-        if (st === 'loss' || st == null) { if (!run) from = r.ev.ts; run++; }
-        else if (st === 'win') { run = 0; from = null; }
-      });
-      const cur = next != null ? rows[next].b[key] : { run, from };
-      info[key] = { label, run: cur.run, from: cur.from, hist, lvl: spLevel(cur.run), next };
+    const chains = [];
+    while (left.length) {
+      const rows = [], rest = [];
+      let free = -Infinity;
+      for (const r of left) {
+        if (r.ev.ts >= free) { rows.push({ r, b: {} }); free = r.ev.ts + SER_GAP; } else rest.push(r);
+      }
+      chains.push({ no: chains.length + 1, rows, next: null });
+      left = rest;
     }
-    return { rows, info };
+    const hist = {};
+    for (const [key, stKey] of SPECIAL_BETS) {
+      hist[key] = { 2: { wins: 0, n: 0 }, 3: { wins: 0, n: 0 }, 4: { wins: 0, n: 0 } };
+      for (const c of chains) {
+        let run = 0, sure = true;
+        c.rows.forEach((x, i) => {
+          const st = x.r.done ? x.r[stKey] : earlyWin(x.r) ? 'win' : null;
+          x.b[key] = { run, st, sure };
+          const lvl = spLevel(run);
+          if (sure && lvl && (st === 'win' || st === 'loss')) { hist[key][lvl].n++; if (st === 'win') hist[key][lvl].wins++; }
+          if (st == null) { if (c.next == null) c.next = i; sure = false; }
+          if (st === 'loss' || st == null) run++;
+          else if (st === 'win') run = 0;
+        });
+      }
+    }
+    for (const c of chains) {
+      const x = c.next != null ? c.rows[c.next] : null;
+      c.lvl = x ? Math.max(spLevel(x.b.it1.run), spLevel(x.b.it15.run)) : 0;
+    }
+    return { chains: chains.filter(c => c.next != null), hist };
   }
 
   // Найближчий матч кожної «сухої» команди: після нього серія або перерветься, або подовжиться.
@@ -357,79 +337,78 @@
       const o = Math.round((dayStart(ts) - dayStart(now)) / 86400);
       return o >= -1 && o <= 2 ? (o === -1 ? 'Учора' : dayLabel(o)) : `${WD[new Date(ts * 1000).getDay()]}, ${dateOf(ts)}`;
     };
-    const { rows, info } = seriesInfo(d);
-    const ni = info.it15.next;
-    const next = ni != null ? rows[ni] : null;
+    const when = ts => {
+      const o = Math.round((dayStart(ts) - dayStart(now)) / 86400);
+      return `${o === 0 ? '' : o === 1 ? 'завтра ' : `${dateOf(ts)} `}${timeOf(ts)}`;
+    };
+    // Вищий пріоритет — вище; далі — за часом наступного матчу.
+    const { chains, hist } = seriesInfo(d);
+    chains.sort((a, b) => b.lvl - a.lvl || a.rows[a.next].r.ev.ts - b.rows[b.next].r.ev.ts);
     const team = r => esc(r.team.short || r.team.name);
     const badge = lvl => `<span class="sp-badge sp${lvl}">${SP_LEVELS[lvl].stars} ${SP_LEVELS[lvl].name}</span>`;
-    const RES_ICON = { win: '✓', loss: '✗', void: '↺' };
-
-    // Хід поточної серії ставки: виграш, яким закрилась попередня, програші після нього і наступна ставка.
-    const serHtml = key => {
-      if (ni == null) return '';
-      let s = ni;
-      while (s > 0 && rows[s - 1].b[key].st !== 'win') s--;
-      const done = rows.slice(Math.max(0, s - 1), ni);
-      const cur = rows[ni].b[key], no = cur.run + 1, lvl = spLevel(cur.run);
-      const shown = done.length > 7 ? done.slice(-7) : done;
-      const chips = [
-        ...(done.length > shown.length ? ['<i class="ser-chip more">…</i>'] : []),
-        ...shown.map(x => `<i class="ser-chip ${x.b[key].st}" title="${esc(x.r.team.name)} ${dateOf(x.r.ev.ts)}">${RES_ICON[x.b[key].st]} ${team(x.r)}</i>`),
-        '<i class="ser-chip now">▶ ця ставка</i>',
-      ].join('');
-      const txt = cur.run ? `Ставка №${no} у серії: перед нею ${cur.run} ${plural(cur.run, 'програш', 'програші', 'програшів')} поспіль.`
-        : 'Ставка №1 — нова серія (попередня закрилась виграшем).';
-      return `<div class="ser-line"><b>${txt}</b>${lvl ? ` ${badge(lvl)}` : ''}</div><div class="ser-chips">${chips}</div>`;
-    };
-    const lvlNow = next ? Math.max(spLevel(next.b.it1.run), spLevel(next.b.it15.run)) : 0;
-
-    // Черга: зіграні сьогодні матчі серії, наступна ставка і всі подальші.
+    const ICONS = { win: '✓', loss: '✗', void: '↺' };
     const today = dayStart(now);
-    const queue = rows.filter((x, i) => (ni != null && i >= ni) || (x.r.done && x.r.ev.ts >= today));
-    let day = null;
-    const queueHtml = queue.map(x => {
-      const r = x.r, ev = r.ev, isNext = x === next;
-      const ds = dayStart(ev.ts);
-      const head = ds !== day ? `<div class="q-day">${esc(dayTitle(ev.ts))}</div>` : '';
-      day = ds;
-      const res = r.done ? `<span class="q-res">${['it1', 'it15'].map(k => `<i class="${x.b[k].st}">${k === 'it1' ? 'ІТБ 1' : 'ІТБ 1.5'} ${RES_ICON[x.b[k].st]}</i>`).join('')}</span>`
-        : isNext ? `<span class="q-res"><i class="now">${ev.state === 'in' ? 'йде зараз' : 'ставити'}</i></span>`
-        : (() => {
-          const v = vbetOf(r);
-          return v ? `<span class="q-odds">${v.it1 ? v.it1.toFixed(2) : '—'} / ${v.it15 ? v.it15.toFixed(2) : '—'} <span class="bk vbet">VBET</span></span>` : '';
-        })();
-      return `${head}<div class="q-row ${r.done ? 'done' : ''} ${isNext ? 'next' : ''}">
-        <b>${ev.state === 'in' ? `<span class="live">LIVE</span>` : timeOf(ev.ts)}</b>
-        <span>${team(r)} ${r.side === 'home' ? 'vs' : '@'} ${esc(r.opp.short || r.opp.name)}${r.done ? ` <small>${ev.home.score}:${ev.away.score}</small>` : ''}</span>
-        ${res}</div>`;
-    }).join('');
 
-    const inChain = new Set(rows.map(x => x.r.id));
-    const others = upcoming.filter(r => !inChain.has(r.id));
+    // Рядок ставки: номер у серії, кф і хід серії (виграш, що закрив попередню, далі програші, ▶ — ця ставка).
+    const betLine = (c, key, label) => {
+      const x = c.rows[c.next], cur = x.b[key], lvl = spLevel(cur.run);
+      let s = c.next;
+      while (s > 0 && c.rows[s - 1].b[key].st !== 'win') s--;
+      const done = c.rows.slice(Math.max(0, s - 1), c.next).slice(-8);
+      const chips = done.map(y => `<i class="${y.b[key].st}" title="${esc(y.r.team.name)} ${dateOf(y.r.ev.ts)}">${ICONS[y.b[key].st]}</i>`).join('');
+      return `<div class="sc-bet ${lvl ? `sp${lvl}` : ''}">
+        <span class="sc-label">${label}</span>
+        <span class="sc-no">ставка №${cur.run + 1}${lvl ? ' ' + SP_LEVELS[lvl].stars : ''}</span>
+        <span class="sc-chips">${chips}<i class="now">▶</i></span>
+        <span class="sc-k">${oddsHtml(x.r, key)}</span>
+      </div>`;
+    };
+
+    const card = c => {
+      const x = c.rows[c.next], r = x.r, ev = r.ev;
+      const queue = c.rows.filter((y, i) => i >= c.next || (y.r.done && y.r.ev.ts >= today));
+      let day = null;
+      const qHtml = queue.map(y => {
+        const q = y.r, isNext = y === x;
+        const ds = dayStart(q.ev.ts);
+        const head = ds !== day ? `<div class="q-day">${esc(dayTitle(q.ev.ts))}</div>` : '';
+        day = ds;
+        const v = !q.done && !isNext && vbetOf(q);
+        const res = q.done ? `<span class="q-res">${['it1', 'it15'].map(k => `<i class="${y.b[k].st}">${k === 'it1' ? 'ІТБ 1' : 'ІТБ 1.5'} ${ICONS[y.b[k].st]}</i>`).join('')}</span>`
+          : isNext ? '<span class="q-res"><i class="now">зараз</i></span>'
+          : v ? `<span class="q-odds">${v.it1 ? v.it1.toFixed(2) : '—'} / ${v.it15 ? v.it15.toFixed(2) : '—'} <span class="bk vbet">VBET</span></span>` : '';
+        return `${head}<div class="q-row ${q.done ? 'done' : ''} ${isNext ? 'next' : ''}">
+          <b>${q.ev.state === 'in' ? '<span class="live">LIVE</span>' : timeOf(q.ev.ts)}</b>
+          <span>${team(q)} ${q.side === 'home' ? 'vs' : '@'} ${esc(q.opp.short || q.opp.name)}${q.done ? ` <small>${q.ev.home.score}:${q.ev.away.score}</small>` : ''}</span>
+          ${res}</div>`;
+      }).join('');
+      const left = c.rows.length - c.next - 1;
+      return `
+        <details class="card sc ${c.lvl ? `special sp${c.lvl}` : ''}">
+          <summary>
+            <div class="sc-head"><b>Серія ${c.no}</b>${c.lvl ? badge(c.lvl) : ''}<small>${left ? `далі ще ${matches(left)}` : 'останній матч у черзі'} ›</small></div>
+            <div class="sc-match"><b class="${ev.state === 'in' ? 'live' : ''}">${ev.state === 'in' ? `LIVE ${ev.home.score ?? 0}:${ev.away.score ?? 0}` : when(ev.ts)}</b>
+              <span><b>${team(r)}</b> ${r.side === 'home' ? 'vs' : '@'} ${esc(r.opp.short || r.opp.name)}</span>
+              <small>${esc((leagueOf(r.slug) || {}).short || '')} · без голів ${r.n}</small></div>
+            ${betLine(c, 'it1', 'ІТБ 1')}${betLine(c, 'it15', 'ІТБ 1.5')}
+          </summary>
+          <div class="q-list">${qHtml}</div>
+        </details>`;
+    };
+
     const histTxt = h => [2, 3, 4].map(l => `після ${SP_LEVELS[l].runs} — ${h[l].n ? `${h[l].wins} з ${h[l].n}` : 'не було'}`).join(', ');
-    const after = next && rows[ni + 1];
-
     $view.innerHTML = `
-      <p class="summary">Проаналізовано ${matches(analyzed)} у ${d.mode === 'all' ? `${COMPS.length} турнірах` : `${CHAMPS.length} чемпіонатах`} на 10 днів · рекомендацій: <b>${upcoming.length}</b>${d.errors ? ` · не завантажено ліг: ${d.errors}` : ''}</p>
-      ${next ? `
-        <h2 class="section-title">${next.r.ev.state === 'in' ? 'Ставка серії — матч іде' : 'Ставити зараз'}</h2>
-        ${lvlNow ? `<div class="ser-prio sp${lvlNow}">${badge(lvlNow)} особлива ставка — після ${Math.max(next.b.it1.run, next.b.it15.run)} програшів поспіль</div>` : ''}
-        ${recCard(next.r, { it1: serHtml('it1'), it15: serHtml('it15') }, lvlNow)}
-        <p class="hint pad ser-after">Результат ≈ ${timeOf(next.r.ev.ts + SER_END)}.${after ? ` Далі в серії: <b>${dateOf(after.r.ev.ts) !== dateOf(next.r.ev.ts) ? `${dateOf(after.r.ev.ts)} ` : ''}${timeOf(after.r.ev.ts)} ${team(after.r)}</b>.` : ''} Виграш — серія закінчена, наступна ставка знову №1. Програш — серія триває, номер наступної ставки зростає на 1.</p>`
+      <p class="summary">Проаналізовано ${matches(analyzed)} у ${d.mode === 'all' ? `${COMPS.length} турнірах` : `${CHAMPS.length} чемпіонатах`} на 10 днів · рекомендацій: <b>${upcoming.length}</b> · серій: <b>${chains.length}</b>${d.errors ? ` · не завантажено ліг: ${d.errors}` : ''}</p>
+      ${chains.length ? `<p class="hint pad ser-intro">Кожна серія — матчі по черзі: наступний починається після кінця попереднього, тож ставиш, знаючи результат. Виграш — серія знову зі ставки №1; програш — номер +1. ✓ ✗ ↺ — останні ставки серії, ▶ — ця. Натисни на серію — черга її матчів.</p>
+        ${chains.map(card).join('')}`
         : `<div class="empty">Найближчими днями немає матчів команд, що не забивають ${MIN_STREAK} тури і більше.</div>`}
-      ${queue.length ? `<section class="card"><h3>Черга матчів серії</h3>
-        <div class="q-list">${queueHtml}</div>
-        <p class="hint">Матчі йдуть по одному: наступний починається, коли результат попереднього вже відомий (матч ≈ 1 год 55 хв + 20 хв поставити). З одночасних матчів у серію береться найімовірніший. Справа — кф VBET: ІТБ 1 / ІТБ 1.5.</p>
-      </section>` : ''}
-      <details class="dr-more"><summary>Пріоритети й історія</summary>
+      <details class="dr-more"><summary>Пріоритети, кф та історія</summary>
         <div class="card">
-          <p class="hint top">Особлива ставка — після серії програшів поспіль: ${[4, 3, 2].map(l => `${badge(l)} після ${SP_LEVELS[l].runs}`).join(' · ')}. Для ІТБ 1 повернення (рівно 1 гол) серію не змінює.</p>
-          <p class="hint">Раніше в серії ІТБ 1 вигравала: ${histTxt(info.it1.hist)}.<br>ІТБ 1.5: ${histTxt(info.it15.hist)}.</p>
-          <p class="hint">Кф: <span class="bk vbet">VBET</span> — з лінії vbet.ua (оновлюється кожні 5 хв); <span class="bk dk">модель</span> — матчу немає в лінії VBET, показано справедливий кф моделі (у букмекера на 5–8% нижчий).</p>
+          <p class="hint top">Особлива ставка — після серії програшів поспіль: ${[4, 3, 2].map(l => `${badge(l)} після ${SP_LEVELS[l].runs}`).join(' · ')}. Такі серії стоять угорі. Для ІТБ 1 повернення (рівно 1 гол) серію не змінює.</p>
+          <p class="hint">Раніше в серіях ІТБ 1 вигравала: ${histTxt(hist.it1)}.<br>ІТБ 1.5: ${histTxt(hist.it15)}.</p>
+          <p class="hint">Кф: <span class="bk vbet">VBET</span> — з лінії vbet.ua (оновлюється кожні 5 хв); <span class="bk dk">модель</span> — матчу немає в лінії VBET, показано справедливий кф моделі (у букмекера на 5–8% нижчий). Матч ≈ 1 год 55 хв; наступний у серії — щонайменше через 20 хв після кінця.</p>
         </div>
       </details>
-      ${others.length ? `<details class="dr-more"><summary>Інші рекомендації (не в серії) · ${others.length}</summary>
-        ${others.map(r => recCard(r)).join('')}</details>` : ''}
       <p class="hint pad">Рекомендація — лише для команди, яка не забивала ${d.mode === 'all' ? 'в усіх турнірах разом' : 'в чемпіонаті'} ${MIN_STREAK} матчі поспіль і більше. Ставки — на її індивідуальний тотал: ІТБ 1 (2+ голи — виграш, рівно 1 — повернення) та ІТБ 1.5 (2+ голи). Ймовірність — з моделі за результатами сезону.</p>`;
   }
 
