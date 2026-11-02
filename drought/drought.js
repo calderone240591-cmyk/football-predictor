@@ -326,7 +326,12 @@
       return `${o === 0 ? 'сьогодні' : o === 1 ? 'завтра' : o === -1 ? 'учора' : dateOf(ts)} ${timeOf(ts)}`;
     };
     const team = r => esc(r.team.short || r.team.name);
-    const vs = r => `${team(r)} ${r.side === 'home' ? 'vs' : '@'} ${esc(r.opp.short || r.opp.name)}`;
+    // Матч у порядку господарі – гості; команда, що не забиває, виділена і з кількістю матчів без голів.
+    const vs = r => {
+      const dry = `<b class="dry">${team(r)} <i>не забиває ${matches(r.n)}</i></b>`;
+      const opp = `<span class="opp">${esc(r.opp.short || r.opp.name)}</span>`;
+      return r.side === 'home' ? `${dry} – ${opp}` : `${opp} – ${dry}`;
+    };
     const badge = lvl => `<span class="sp-badge sp${lvl}">${SP_LEVELS[lvl].stars} ${SP_LEVELS[lvl].name}</span>`;
     const ICONS = { win: '✓', loss: '✗', void: '↺' };
 
@@ -343,7 +348,7 @@
           <div class="sc-next">
             <div class="sc-no">Ставка №${x.n}</div>
             <div class="sc-match"><b class="${ev.state === 'in' ? 'live' : ''}">${ev.state === 'in' ? `LIVE ${ev.home.score ?? 0}:${ev.away.score ?? 0}` : when(ev.ts)}</b>
-              <span>${vs(r)}</span><small>${esc((leagueOf(r.slug) || {}).short || '')} · без голів ${r.n}</small></div>
+              <span>${vs(r)}</span><small>${esc((leagueOf(r.slug) || {}).short || '')}</small></div>
             <div class="sc-k">${oddsHtml(r, key)}</div>
           </div>
           ${later.length ? `<p class="sc-later">Якщо програє, далі в цій серії: ${later.slice(0, 3).map(y => `${when(y.r.ev.ts)} ${team(y.r)}`).join(' · ')}${later.length > 3 ? ` · ще ${later.length - 3}` : ''}</p>` : ''}

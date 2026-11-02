@@ -69,6 +69,11 @@
 .sc-icons i.win { background: var(--hi); color: var(--accent-ink); }
 .sc-icons i.loss { background: var(--lo); color: var(--accent-ink); }
 .ser-intro { margin-bottom: 10px; }
+/* Команда, що не забиває, — виділена; суперник — звичайним */
+.dry { color: var(--lo); font-weight: 700; }
+.dry i { display: inline-block; margin-left: 2px; padding: 0 6px; border-radius: 999px; font-style: normal; font-size: 10px; font-weight: 700; line-height: 16px; vertical-align: 2px; white-space: nowrap; color: var(--accent-ink); background: var(--lo); }
+.opp { font-weight: 400; color: var(--muted); }
+.sc-match > span .opp { color: var(--text); }
 /* Усі ставки по часу */
 .q-list { display: grid; }
 .q-day { margin-top: 10px; padding-bottom: 4px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
